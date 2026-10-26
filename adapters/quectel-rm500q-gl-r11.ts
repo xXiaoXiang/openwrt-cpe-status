@@ -68,12 +68,12 @@ export const rm500q: ModemAdapter = {
     carriers: query('AT+QCAINFO', 30_000, [
       rule('^\\+QCAINFO:\\s*("(?:PCC|SCC)",\\d+,\\d+,"LTE BAND \\d+",.*)$', {
         carrier_role: field(0), arfcn: measurement(1), bandwidth_mhz: field(2, 'string', { map: { '6': 1.4, '15': 3, '25': 5, '50': 10, '75': 15, '100': 20 } }),
-        band_label: field(3), pci: measurement(5), rsrp: measurement(6), rsrq: measurement(7), rssi: measurement(8), rssnr: measurement(9),
+        band_number: field(3, 'number', { pattern: 'BAND ([0-9]+)$' }), band_label: field(3), pci: measurement(5), rsrp: measurement(6), rsrq: measurement(7), rssi: measurement(8), rssnr: measurement(9),
       }, { tech: 'lte' }),
       // R13 hardware: "SCC",632352,7,"NR5G BAND 78",41.
       // NR has PCI at index 4, no LTE state field, and uses bandwidth enums.
       rule('^\\+QCAINFO:\\s*("(?:PCC|SCC)",\\d+,\\d+,"NR5G BAND \\d+",\\d+)$', {
-        carrier_role: field(0), arfcn: measurement(1), ...nrWidth(2), band_label: field(3), pci: measurement(4),
+        carrier_role: field(0), arfcn: measurement(1), ...nrWidth(2), band_number: field(3, 'number', { pattern: 'BAND ([0-9]+)$' }), band_label: field(3), pci: measurement(4),
       }, { tech: 'nr' }),
     ], { optional: true, allowEmpty: true, note: 'LTE width uses resource blocks; R13 NR width uses the QENG NR enum. LTE field 9 is RSSNR in dB, not the QENG SINR enum. NR QCAINFO only supplements a matching valid QENG cell.' }),
     attach: query('AT+CGATT?', 10_000, [rule('^\\+CGATT:\\s*(.*)$', { attached: field(0, 'boolean') })]),

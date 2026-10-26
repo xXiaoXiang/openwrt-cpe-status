@@ -1,3 +1,4 @@
+import { profileFixture } from './profile-fixture.ts'
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
@@ -12,7 +13,8 @@ let dir = getenv('CPE_BANDS_TEST_DIR'), cmd = ARGV[3], path = dir + '/state.json
 writefile(dir + '/commands', (readfile(dir + '/commands') || '') + cmd + '\n');
 let state = json(readfile(path));
 function rows(values) { for (let key, bands in values) print('+QNWPREFCFG: "' + key + '",' + join(':', bands) + '\n'); }
-if (cmd == 'AT+CGMM;+QNWPREFCFG="ue_capability_band"') {
+if (cmd == 'AT+CGMM') print('RM500Q-GL\n');
+else if (cmd == 'AT+CGMM;+QNWPREFCFG="ue_capability_band"') {
   print(readfile(dir + '/wrong-model') ? 'OTHER-MODEM\n' : 'RM500Q-GL\n'); rows(state.supported);
 } else if (cmd == 'AT+QNWPREFCFG="lte_band";+QNWPREFCFG="nr5g_band";+QNWPREFCFG="nsa_nr5g_band"') {
   if (readfile(dir + '/bad-read')) print('ERROR\n'); else rows(state.enabled);
@@ -29,7 +31,7 @@ if (cmd == 'AT+CGMM;+QNWPREFCFG="ue_capability_band"') {
 }
 `
 const supported = { lte_band: [1, 3, 7], nr5g_band: [41, 78, 79], nsa_nr5g_band: [41, 78, 79] }
-const script = [
+const script = [profileFixture(root),
   'set -eu', 'umask 077', `mkdir -p ${root}/bin ${root}/cache`,
   ...Object.entries({ bands: bandReader, control: modemControl, result: modemControlResult, 'bin/sms_tool': fakeAt }).flatMap(([file, content], index) => [`cat > ${root}/${file} <<'CPE_FILE_${index}'`, content, `CPE_FILE_${index}`]),
   `chmod 700 ${root}/bands ${root}/control ${root}/result ${root}/bin/sms_tool`,
@@ -89,7 +91,7 @@ cat "$CPE_BANDS_TEST_DIR/commands"
 echo '>>> done'
 `,
 ].join('\n')
-const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 child.stdin.end(script + '\n')
 let stdout = '', stderr = ''
 child.stdout.on('data', part => { stdout += part.toString() })
@@ -136,7 +138,7 @@ if (process.argv.includes('--live-read')) {
     `if printf '%s' "$output" | grep -qE '"status"[[:space:]]*:[[:space:]]*"ok"'; then printf '%s\\n' "$output"; exit 0; fi`,
     'sleep 1; i=$((i+1))', 'done', 'printf "%s\\n" "$output"', 'exit 1',
   ].join('\n')
-  const live = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+  const live = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
   let result = '', errors = ''
   live.stdout.on('data', part => { result += part.toString() })
   live.stderr.on('data', part => { errors += part.toString() })

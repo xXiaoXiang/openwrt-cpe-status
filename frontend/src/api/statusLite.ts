@@ -1,3 +1,4 @@
+import type { ModemProfile } from '../../../shared/modem-profile.ts'
 import { validateApnSettings, type ApnSettings } from '../../../shared/apn-settings.ts'
 import { snapshotRoutes, type StatusSnapshot } from '../../../shared/status-snapshot.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
@@ -14,12 +15,18 @@ let pending: Promise<StatusSnapshot> | undefined
 let revision = 0
 let writing = false
 let canWrite: boolean | undefined
+let selectedProfile: ModemProfile | undefined
 let localRead: Promise<{ speed?: { wall_time: number; time: number; previous_time: number; counters: StatusSnapshot['host']['counters']; previous_counters: StatusSnapshot['host']['counters'] }; wwan?: { status: string; message: string; carrier?: string; apn?: string } }> | undefined
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })
 export async function statusLiteFetch(path: string, init: RequestInit | undefined, rpc: (object: string, method: string, args: object) => Promise<unknown>) {
   if (path === '/api/adaptation') {
     try { canWrite = (await rpc('session', 'access', { scope: 'access-group', object: 'luci-app-cpe-status', function: 'write' }) as { access?: boolean }).access === true } catch { canWrite = false }
-    return response({ status: 'ok', data: { ...snapshotCapabilities, writes_enabled: canWrite } })
+    const file = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: ['profile'] }) as { code?: number; stdout?: string }
+    const info = file.code === 0 && file.stdout ? JSON.parse(file.stdout) : {}
+    const profile = info.data as ModemProfile | undefined
+    const valid = profile?.schemaVersion === 1
+    selectedProfile = profile
+    return response({ status: 'ok', data: { ...snapshotCapabilities, id: profile?.id ?? 'unknown-modem', writes_enabled: canWrite && valid, data_control: valid, airplane_control: !!profile?.commands.airplaneSet, roaming_policy: !!profile?.commands.roamingSet, modem_profile: profile } })
   }
   const local = async () => {
     if (!localRead) localRead = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-speed-settings', params: ['read'] }).then(result => {
@@ -116,7 +123,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
       else if (kind === 'mode') {
         if (!networkModes.some(mode => mode.value === body.mode)) throw new Error('无效的网络模式')
         params = ['mode', String(body.mode)]
-      } else if (kind === 'cell') params = cellLockParams(body as unknown as CellLockRequest)
+      } else if (kind === 'cell') params = cellLockParams(body as unknown as CellLockRequest, selectedProfile)
       else params = kind === 'bands' ? ['bands', ...bandGroups.map(group => normalizeBands(body[group.key]).join(':'))] : [kind, target ? '1' : '0']
     }
     catch (error) { return response({ status: 'error', message: String(error) }) }

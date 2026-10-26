@@ -3,7 +3,7 @@ import { statusRuntime } from './status-collector.ts'
 // Commands and semantics checked against obsy/modemband _quectel_common2.
 // Discover supported bands from the modem instead of a static model template.
 export const bandRuntime = String.raw`
-const bandNames = { lte: 'lte_band', sa: 'nr5g_band', nsa: 'nsa_nr5g_band' };
+const bandNames = profile?.bandOperations || {};
 function bandList(value) {
   if (type(value) != 'string' || !match(value, /^[1-9][0-9]*(:[1-9][0-9]*)*$/) || length(value) > 640) die('Invalid band list');
   let bands = [];
@@ -15,29 +15,29 @@ function bandList(value) {
   if (length(bands) > 128) die('Too many bands');
   return sort(bands, (a, b) => a - b);
 }
-function parseBandReply(raw) {
+function parseBandReply(raw, capability) {
   let result = {};
   if (match(raw, /(^|\n)(ERROR|\+CME ERROR:)/)) die('模块拒绝频段查询');
-  for (let line in split(raw, '\n')) {
-    let found = match(trim(line), /^\+QNWPREFCFG:\s*"(lte_band|nr5g_band|nsa_nr5g_band)",\s*([0-9:]+)\s*$/);
-    if (found) for (let key, name in bandNames) if (found[1] == name) {
-      if (result[key]) die('频段查询返回重复结果');
-      result[key] = bandList(found[2]);
-    }
+  let records = [];
+  if (capability) records = profileParse('bandCapabilities', raw);
+  else for (let entry in values(bandNames)) for (let row in profileParse(entry.read, raw)) push(records, row);
+  for (let row in records) if (row.rat in bandNames) {
+    if (result[row.rat]) die('频段查询返回重复结果');
+    result[row.rat] = bandList(row.bands);
   }
-  for (let key in keys(bandNames)) if (!result[key]) die('模块未返回完整的 LTE / SA / NSA 频段');
+  for (let key in keys(bandNames)) if (!result[key]) die('模块未返回完整频段');
   return result;
 }
 function bandAt(cmd) { return bounded('sms_tool -d ' + port + ' at ' + "'" + cmd + "'", 5); }
 function readBands() {
   let capabilities = readJSON(directory + '/band-capabilities.json');
   if (!capabilities || capabilities.device != port || time() - capabilities.sampled_at >= cacheSeconds.bandCapabilities) {
-    let raw = bandAt('AT+CGMM;+QNWPREFCFG="ue_capability_band"');
-    if (!match(raw, /(^|\n)RM500Q-GL\s*(\r?\n|$)/)) die('当前频段设置仅适配 RM500Q-GL');
-    capabilities = { device: port, model: 'RM500Q-GL', supported: parseBandReply(raw), sampled_at: time() };
+    let raw = bandAt(profileBatch(['model', 'bandCapabilities']));
+    let model = profileRow('model', raw).model; if (!match(model || '', profileRegex(profile.modelPattern))) die('模块型号与适配不匹配');
+    capabilities = { device: port, model, supported: parseBandReply(raw, true), sampled_at: time() };
     save(directory + '/band-capabilities.json', capabilities);
   }
-  let raw = bandAt('AT+QNWPREFCFG="lte_band";+QNWPREFCFG="nr5g_band";+QNWPREFCFG="nsa_nr5g_band"');
+  let raw = bandAt(profileBatch(map(values(bandNames), entry => entry.read)));
   let result = { device: port, model: capabilities.model, supported: capabilities.supported, enabled: parseBandReply(raw), sampled_at: time() };
   save(directory + '/bands.json', result);
   return result;
@@ -68,7 +68,7 @@ if (ARGV[0] != '--refresh') {
   else reply({ status: failure ? 'error' : 'deferred', message: failure?.message || '正在读取模块频段，请稍候', retry_after_ms: 2000 });
   exit(0);
 }
-let lock = directory + '/lock', acquired = mkdir(lock, 0700);
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', acquired = mkdir(lock, 0700);
 if (!acquired) {
   let owner = +text(lock + '/pid'), info = stat(lock);
   if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) {

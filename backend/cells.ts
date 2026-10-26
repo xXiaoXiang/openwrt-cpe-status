@@ -10,7 +10,7 @@ export function normalizeCells(serving: Record<string, Scalar>[], neighbors: Rec
   for (const row of carriers) {
     if (row.arfcn == null || Number(row.arfcn) < 0 || row.pci == null) continue
     const match = combined.find(cell => cell.tech === row.tech && cell.arfcn === row.arfcn && cell.pci === row.pci)
-    const band = /(?:LTE BAND|NR5G BAND) (\d+)/.exec(String(row.band_label))
+    const bandNumber = row.band_number
     const role = row.carrier_role === 'PCC' ? 'PCC' : `SCC${++secondaryIndex}`
     if (match) {
       match.carrier_role = role
@@ -22,11 +22,11 @@ export function normalizeCells(serving: Record<string, Scalar>[], neighbors: Rec
       }
       if (row.rssnr != null) match.rssnr = row.rssnr
     }
-    else if (row.tech === 'lte') combined.push({ ...row, band_number: band ? Number(band[1]) : null, is_serving: true, is_secondary: role !== 'PCC', carrier_role: role })
+    else if (row.tech === 'lte') combined.push({ ...row, band_number: bandNumber ?? null, is_serving: true, is_secondary: role !== 'PCC', carrier_role: role })
   }
   for (const row of neighbors) {
     if (row.pci == null || row.arfcn == null || combined.some(cell => cell.tech === row.tech && cell.arfcn === row.arfcn && cell.pci === row.pci)) continue
-    const band = row.tech === 'lte' ? lteRanges.find(([, min, max]) => Number(row.arfcn) >= min && Number(row.arfcn) <= max)?.[0] : undefined
+    const band = row.band_number ?? (row.tech === 'lte' ? lteRanges.find(([, min, max]) => Number(row.arfcn) >= min && Number(row.arfcn) <= max)?.[0] : undefined)
     combined.push({ ...row, band_number: band ?? null })
   }
   // Keep the actual primary first, followed by secondary carriers in numeric

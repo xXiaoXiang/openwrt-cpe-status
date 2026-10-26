@@ -1,3 +1,4 @@
+import { profileFixture, profileFingerprint } from './profile-fixture.ts'
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
@@ -18,7 +19,8 @@ if(kind=='uci') {
   else if(args[0]!='commit' || args[1]!='network')die('INVALID COMMIT');
 } else if(kind=='sms_tool') {
   let cmd=args[length(args)-1];
-  if(cmd=='AT+CPIN?;+QCCID') print(readfile(root+'/no-sim')?'+CME ERROR: 10\n':'+CPIN: READY\n+QCCID: 8985200123456789012\n');
+  if(cmd=='AT+CGMM') print('RM500Q-GL\n');
+  else if(cmd=='AT+CPIN?;+QCCID') print(readfile(root+'/no-sim')?'+CME ERROR: 10\n':'+CPIN: READY\n+QCCID: 8985200123456789012\n');
   else if(cmd=='AT+CFUN?') print('+CFUN: 1\n');
   else if(cmd=='AT+CIMI') print('454001234567890\n');
   else if(index(cmd,'AT+CRSM=')==0) print('+CRSM: 144,0,"00000002"\n');
@@ -38,16 +40,17 @@ const manager = wwanManager.replaceAll("'/etc/cpe-status", `'${root}/persistent`
 const control = modemControl.replace("mkdir('/etc/cpe-status', 0700);", `mkdir('${root}/persistent', 0700);`)
 const files = { control, reader: apnReader, manager, fake }
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'"
-const script = ['set -eu', 'umask 077', `mkdir -p ${root}/cache ${root}/persistent ${root}/bin`,
+const script = [profileFixture(root),'set -eu', 'umask 077', `mkdir -p ${root}/cache ${root}/persistent ${root}/bin`,
   ...Object.entries(files).flatMap(([name, content], i) => [`cat >${root}/${name} <<'CPE_APN_${i}'`, content, `CPE_APN_${i}`, `chmod 700 ${root}/${name}`, `ucode -c -o /dev/null ${root}/${name}`]),
   ...['uci','sms_tool','ifup','ifdown','ubus','ip'].flatMap(name => [`printf '#!/bin/sh\nexec ${root}/fake ${name} "$@"\n' >${root}/bin/${name}`, `chmod 700 ${root}/bin/${name}`]),
   `export CPE_STATUS_CACHE=${root}/cache CPE_STATUS_CONFIG=${root}/config.json CPE_STATUS_APN_OVERRIDES=${root}/persistent/overrides.json CPE_APN_TEST=${root} CPE_STATUS_APN_SCRIPT=${root}/reader`,
   `export PATH=${root}/bin:"$PATH"`,
   `echo '${JSON.stringify({ device: '/dev/ttyUSB2', networkInterface: 'wwan' })}' >${root}/config.json`,
   `echo '${JSON.stringify({ up: true, calls: [], uci: { proto: 'qmi', apn: 'old-apn', pdptype: 'ipv4', auth: 'none', auto: '0', modes: 'lte,5gnr', plmn: '0' } })}' >${root}/state.json`,
+  `printf '%s' '{"apns":[]}' >${root}/persistent/apns.local.json`,
   `echo '>>> initial'; ${root}/reader`,
   `echo '>>> invalid'; ${root}/control apn '{}'`,
-  `now=$(date +%s); printf '%s' ${quote(JSON.stringify({ id: '1-1', device: '/dev/ttyUSB2', interface: 'wwan', kind: 'apn', target: settings, status: 'pending' }).replace(/}$/, ',"started":'))}"$now"'}' >${root}/cache/control-1-1.json`,
+  `now=$(date +%s); printf '%s' ${quote(JSON.stringify({ id: '1-1', profile_key: profileFingerprint(), device: '/dev/ttyUSB2', interface: 'wwan', kind: 'apn', target: settings, status: 'pending' }).replace(/}$/, ',"started":'))}"$now"'}' >${root}/cache/control-1-1.json`,
   `${root}/control --run 1-1`,
   `echo '>>> result'; cat ${root}/cache/control-1-1.json; echo`,
   `echo '>>> state'; cat ${root}/state.json; echo`,
@@ -56,14 +59,14 @@ const script = ['set -eu', 'umask 077', `mkdir -p ${root}/cache ${root}/persiste
   `touch ${root}/present; echo '[]' >${root}/apns.json; ${root}/manager`,
   `echo '>>> restart'; cat ${root}/state.json; echo`,
   `echo 1 >${root}/no-sim`,
-  `now=$(date +%s); printf '%s' ${quote(JSON.stringify({ id: '1-2', device: '/dev/ttyUSB2', interface: 'wwan', kind: 'apn', target: { ...settings, apn: 'bad.apn' }, status: 'pending' }).replace(/}$/, ',"started":'))}"$now"'}' >${root}/cache/control-1-2.json`,
+  `now=$(date +%s); printf '%s' ${quote(JSON.stringify({ id: '1-2', profile_key: profileFingerprint(), device: '/dev/ttyUSB2', interface: 'wwan', kind: 'apn', target: { ...settings, apn: 'bad.apn' }, status: 'pending' }).replace(/}$/, ',"started":'))}"$now"'}' >${root}/cache/control-1-2.json`,
   `${root}/control --run 1-2`,
   `echo '>>> nosim'; cat ${root}/cache/control-1-2.json; echo; cat ${root}/state.json; echo`,
   `echo '{"device":"/dev/ttyUSB2","networkInterface":"wan"}' >${root}/config.json`,
   `echo '>>> confinement'; ${root}/reader`,
   `echo '>>> done'`,
 ].join('\n') + '\n'
-const child = spawn('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8','-o','UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts','root@192.168.2.248','sh -s'], { windowsHide: true, stdio: ['pipe','pipe','pipe'] })
+const child = spawn('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8','-o','UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts','root@192.168.6.248','sh -s'], { windowsHide: true, stdio: ['pipe','pipe','pipe'] })
 child.stdin.end(script)
 let output = '', errors = ''
 child.stdout.on('data', data => { output += data }); child.stderr.on('data', data => { errors += data })

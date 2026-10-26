@@ -7,7 +7,7 @@ import { useAdaptivePolling } from '../hooks/useAdaptivePolling'
 import { request } from '../api/request'
 import { useCapabilities } from '../contexts/CapabilitiesContext'
 import { CellInfo } from '../pages/Dashboard/components/CellInfo'
-import { cellTarget, cellLockParams, type CellLockRequest, type CellLockState } from '../../../shared/radio-settings.ts'
+import { cellTarget, cellLockParams, cellLockCommand, type CellLockRequest, type CellLockState } from '../../../shared/radio-settings.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import type { CellsResponse } from '../api/types'
 
@@ -40,7 +40,7 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
     if (!active.current || started !== revision.current) return result
     // While a new job runs, data is the previous scan's successful result.
     // Do not present that old list as the result of the pending scan.
-    if (result.data && restore && !result.scanning && result.status === 'ok') { setScanCells(parseCellScan(result.data.raw)) }
+    if (result.data && restore && !result.scanning && result.status === 'ok') { setScanCells(parseCellScan(result.data.raw, result.data.records)) }
     setScanning(result.scanning === true)
     if (result.message && (restore || result.scanning)) setNotice({ severity: result.status === 'ok' ? 'success' : result.status === 'error' ? 'error' : 'info', text: result.message })
     return result
@@ -115,7 +115,7 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
   const apply = async () => {
     if (!confirmation || writing.current || !writable || disabled || scanning) return
     const target = structuredClone(confirmation)
-    try { cellLockParams(target) } catch (error) { setNotice({ severity: 'error', text: String(error) }); return }
+    try { cellLockParams(target, capabilities?.modem_profile) } catch (error) { setNotice({ severity: 'error', text: String(error) }); return }
     setConfirmation(undefined); writing.current = true; revision.current++; setBusy(true); setNotice(undefined)
     try {
       const result = await request<ApiResponse<CellLockState>>('/cell-lock', { method: 'POST', body: JSON.stringify(target) })
@@ -126,11 +126,12 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
     finally { writing.current = false; if (active.current) setBusy(false) }
   }
   const target = confirmation?.cell
-  const command = confirmation ? confirmation.action === 'unlock' ? `AT+QNWLOCK="common/${confirmation.rat === 'lte' ? '4g' : '5g'}",0`
-    : target?.rat === 'lte' ? `AT+QNWLOCK="common/4g",1,${target.arfcn},${target.pci}`
-      : `AT+QNWLOCK="common/5g",${target?.pci},${target?.arfcn},${target?.scs_khz ?? '?'},${target?.band ?? '?'}` : ''
+  let command = ''
+  if (confirmation && capabilities?.modem_profile) { try { command = cellLockCommand(capabilities.modem_profile, confirmation) } catch { /* Missing parameters remain in the dialog. */ } }
+  const scsPattern = capabilities?.modem_profile?.commands.nrCellLockSet?.parameters?.scs
+  const scsChoices = [15,30,60,120,240].filter(value => !scsPattern || new RegExp(`^(${scsPattern})$`).test(String(value)))
   let valid = false
-  if (confirmation) { try { cellLockParams(confirmation); valid = true } catch { /* Dialog collects missing NR parameters. */ } }
+  if (confirmation) { try { cellLockParams(confirmation, capabilities?.modem_profile); valid = true } catch { /* Dialog collects missing NR parameters. */ } }
   // Keep the last confirmed presentation while reads refresh or fail. Write
   // confirmation still requires fresh, exact readback in the API transport.
   const displayedLock = (rat: 'lte' | 'nr') => locks?.[rat]?.status === 'ok' ? locks[rat] : locks?.[rat]?.previous
@@ -167,11 +168,11 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
       <DialogContent>
         <Typography>此操作可能导致网络断开。仅在模块回读与请求一致时显示成功。</Typography>
         {target?.rat === 'nr' && <>
-          <Alert severity="info" sx={{ my: 2 }}>RM500Q 的 NR 指令需要 Band 和 SCS；5G 锁定通常用于 SA。当前处于 NSA 也可提交，以模块回读确认结果。</Alert>
+          <Alert severity="info" sx={{ my: 2 }}>NR 锁定需要 Band 和 SCS；5G 锁定通常用于 SA。当前处于 NSA 也可提交，以模块回读确认结果。</Alert>
           <Box display="flex" gap={1} my={2}>
             <TextField size="small" label="NR Band" type="number" value={target.band ?? ''} onChange={event => setConfirmation({ ...confirmation!, cell: { ...target, band: Number(event.target.value) } })} />
             <TextField size="small" select fullWidth label="SCS（kHz）" value={target.scs_khz ?? ''} onChange={event => setConfirmation({ ...confirmation!, cell: { ...target, scs_khz: Number(event.target.value) } })}>
-              <MenuItem value={15}>15 kHz</MenuItem><MenuItem value={30}>30 kHz</MenuItem>
+              {scsChoices.map(value => <MenuItem key={value} value={value}>{value} kHz</MenuItem>)}
             </TextField>
           </Box>
         </>}

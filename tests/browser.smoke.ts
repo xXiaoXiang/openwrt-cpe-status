@@ -1,3 +1,5 @@
+import { rm500qProfile } from '../adapters/rm500q-profile.ts'
+import { parseReply } from '../backend/parser.ts'
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import { createServer } from 'node:http'
@@ -94,6 +96,7 @@ const harness = createServer(async (req, res) => {
           res.setHeader('Content-Type', 'application/json')
           res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result: [0, { code: 0, stdout: JSON.stringify(value), stderr: '' }] }))
         }
+        if (rpc.params[3].command === '/usr/libexec/cpe-status-snapshot' && rpc.params[3].params[0] === 'profile') { sendControl({ status: 'ok', data: rm500qProfile }); return }
         if (rpc.params[3].command === '/usr/libexec/cpe-status-apn') { sendControl({ status: 'ok', data: { settings: apnSettings, active: true, active_apn: apnSettings.apn, active_protocol: 'IP', sampled_at: 1792427000, logs: apnWrites ? ['+0s 保存配置', '+1s 连接成功'] : [] } }); return }
         if (rpc.params[3].command === '/usr/libexec/cpe-status-speed-settings') { sendControl({ wwan: { status: 'ready', apn: 'internet', carrier: 'CSL' } }); return }
         if (rpc.params[3].command === '/usr/libexec/cpe-status-messaging') {
@@ -111,14 +114,14 @@ const harness = createServer(async (req, res) => {
             else if (operatorJob[0] === 'operator') { operatorState.mode = operatorJob[1] === 'auto' ? 0 : 1; operatorState.plmn = operatorJob[1] === 'auto' ? '45400' : operatorJob[1]; operatorState.operator = operatorState.plmn }
             operatorJob = undefined
           }
-          sendControl({ status: operatorJob ? 'deferred' : rejectOperatorScan ? 'error' : 'ok', busy: !!operatorJob, state: operatorState, data: operatorData, message: operatorJob ? '运营商操作进行中' : rejectOperatorScan ? '运营商扫描失败，保留原列表' : '已读取运营商状态' }); return
+          sendControl({ status: operatorJob ? 'deferred' : rejectOperatorScan ? 'error' : 'ok', busy: !!operatorJob, state: operatorState, data: operatorData ? { ...operatorData, records: parseReply(rm500qProfile.commands.operatorScan, operatorData.raw) } : undefined, message: operatorJob ? '运营商操作进行中' : rejectOperatorScan ? '运营商扫描失败，保留原列表' : '已读取运营商状态' }); return
         }
         if (rpc.params[3].command === '/usr/libexec/cpe-status-scan-result') {
           if (scanPending && ++scanPolls >= 2) {
             scanPending = false
             if (!rejectScan) scanData = { raw: '+QSCAN: "LTE",454,00,1400,366,-95,-13,16,121,31E7C20,452,100,3\n+QSCAN: "LTE",454,00,3349,323,-107,-9,16,121,31E7C20,452,100,7\n+QSCAN: "NR5G",454,00,632352,41,-86,-10,33,1,31E7C20,452,273,78\nOK\n', sampled_at: 1792427000 }
           }
-          sendControl({ status: scanPending ? 'deferred' : rejectScan ? 'error' : 'ok', scanning: scanPending, data: scanData,
+          sendControl({ status: scanPending ? 'deferred' : rejectScan ? 'error' : 'ok', scanning: scanPending, data: scanData ? { ...scanData, records: parseReply(rm500qProfile.commands.cellScan, scanData.raw) } : undefined,
             message: scanPending ? '正在扫描 LTE / NR 小区' : rejectScan ? '扫描超时，保留当前列表' : scanData ? '扫描完成，列表已固定' : '' }); return
         }
         if (rpc.params[3].command === '/usr/libexec/cpe-status-cell-locks') {

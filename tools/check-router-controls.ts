@@ -1,3 +1,4 @@
+import { profileFixture } from './profile-fixture.ts'
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
@@ -38,7 +39,7 @@ esac
 const ip = String.raw`#!/bin/sh
 if test "$(cat "$CPE_CONTROL_TEST_DIR/up")" = 1; then echo '9: wwan0 inet 192.0.2.2/26 scope global wwan0'; fi
 `
-const script = [
+const script = [profileFixture(root),
   'set -eu', 'umask 077', 'mkdir -p ' + root + '/bin ' + root + '/cache',
   'cat > ' + root + "/control <<'CPE_CONTROL_EOF'", modemControl, 'CPE_CONTROL_EOF',
   'cat > ' + root + "/result <<'CPE_RESULT_EOF'", modemControlResult, 'CPE_RESULT_EOF',
@@ -46,7 +47,7 @@ const script = [
   'cat > ' + root + "/bin/ubus <<'CPE_UBUS_EOF'", ubus, 'CPE_UBUS_EOF',
   'cat > ' + root + "/bin/ip <<'CPE_IP_EOF'", ip, 'CPE_IP_EOF',
   'chmod 700 ' + root + '/control ' + root + '/result ' + root + '/bin/*',
-  "printf '%s' '" + JSON.stringify(r13Snapshot) + "' > " + root + '/cache/snapshot.json',
+  "printf '%s' '" + JSON.stringify({ ...r13Snapshot, sampled: { ...r13Snapshot.sampled, identity: Math.floor(Date.now() / 1000) } }) + "' > " + root + '/cache/snapshot.json',
   "printf '%s' '" + JSON.stringify({ device: '/dev/ttyUSB2', networkInterface: 'wwan' }) + "' > " + root + '/config.json',
   'export CPE_STATUS_CACHE=' + root + '/cache',
   'export CPE_STATUS_CONFIG=' + root + '/config.json',
@@ -95,7 +96,7 @@ cat "$CPE_CONTROL_TEST_DIR/concurrent.json"
 echo '>>> done'
 `,
 ].join('\n')
-const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 child.stdin.end(script + '\n')
 let stdout = '', stderr = ''
 child.stdout.on('data', part => { stdout += part.toString() })
@@ -115,7 +116,7 @@ assert.equal(results[2].snapshot.host.net.up, false)
 assert.equal(results[4].snapshot.host.net.up, true, 'restore data that was enabled before flight mode')
 assert.equal(results[7].snapshot.host.net.up, false, 'do not enable data that was off before flight mode')
 assert.equal(results[2].snapshot.sampled.cells, 0)
-assert.match(results[2].snapshot.raw.status, /\+CFUN:\s*4/)
+assert.match(results[2].snapshot.raw.radio, /\+CFUN:\s*4/)
 for (const group of ['sim', 'identity', 'temperature', 'roaming']) assert.equal(results[2].snapshot.raw[group], r13Snapshot.raw[group])
 assert.ok(results[2].finished - results[2].started >= 10, 'an unsuccessful first readback retries after 10s')
 const concurrent = JSON.parse(stdout.split('>>> concurrent\n')[1].split('>>> done')[0])

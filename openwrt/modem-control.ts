@@ -19,7 +19,7 @@ function jobPath(id) {
 export const modemControlResult = resultRuntime + String.raw`
 if (length(ARGV) != 1) { reply({ status: 'error', message: 'Expected control job ID' }); exit(0); }
 let job = readJSON(jobPath(ARGV[0]));
-if (!job || job.device != port || job.interface != iface) {
+if (!job || job.device != port || job.profile_key != profileKey || job.interface != iface) {
   reply({ status: 'error', message: '控制任务不存在，请刷新检查实际状态' }); exit(0);
 }
 if (job.status == 'pending' && time() - job.started >= (longOperator(job.kind) ? 245 : job.kind == 'scan' ? 225 : 65)) {
@@ -66,7 +66,7 @@ if (ARGV[0] != '--run') {
         if (target.arfcn > (rat == 'lte' ? 262143 : 3279165) || target.pci > (rat == 'lte' ? 503 : 1007)) die('小区频点或PCI超出范围');
         if (rat == 'nr') {
           target.band = +ARGV[5]; target.scs_khz = +ARGV[6];
-          if (target.pci == 0 || target.arfcn == 0 || target.band < 1 || target.band > 255 || index([15, 30], target.scs_khz) < 0) die('NR锁定需要非零PCI、频点、FR1频段及15/30kHz SCS');
+          if (target.arfcn == 0 || target.band < 1 || target.band > 1024 || index([15,30,60,120,240], target.scs_khz) < 0) die('NR锁定需要有效频点、频段及SCS，具体支持以适配文件和模块回读为准');
         }
       }
     } catch(e) { reply({ status: 'error', message: '' + e }); exit(0); }
@@ -84,11 +84,11 @@ if (ARGV[0] != '--run') {
   try {
     let active = readJSON(directory + '/control-active.json');
     let job = active ? readJSON(jobPath(active.id)) : null;
-    if (job && job.status == 'pending' && time() - job.started < (longOperator(job.kind) ? 250 : job.kind == 'scan' ? 230 : 75)) {
+    if (job && job.profile_key == profileKey && job.status == 'pending' && time() - job.started < (longOperator(job.kind) ? 250 : job.kind == 'scan' ? 230 : 75)) {
       reply({ status: 'deferred', message: '已有控制任务正在执行，请稍后重试', submitted: false });
     } else {
       let id = time() + '-' + pid;
-      job = { id, device: port, interface: iface, kind: ARGV[0], target, started: time(), status: 'pending', submitted: false };
+      job = { id, device: port, profile_key: profileKey, interface: iface, kind: ARGV[0], target, started: time(), status: 'pending', submitted: false };
       save(jobPath(id), job);
       save(directory + '/control-active.json', { id });
       if (job.kind == 'scan') save(directory + '/scan-active.json', { id });
@@ -110,8 +110,8 @@ if (ARGV[0] != '--run') {
 }
 if (length(ARGV) != 2) exit(1);
 let path = jobPath(ARGV[1]), job = readJSON(path);
-if (!job || job.status != 'pending' || job.device != port || job.interface != iface) exit(1);
-let lock = directory + '/lock', acquired = false, deadline = job.started + (longOperator(job.kind) ? 240 : job.kind == 'scan' ? 220 : 60);
+if (!job || job.status != 'pending' || job.device != port || job.profile_key != profileKey || job.interface != iface) exit(1);
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', acquired = false, deadline = job.started + (longOperator(job.kind) ? 240 : job.kind == 'scan' ? 220 : 60);
 let lockDeadline = (longOperator(job.kind) || job.kind == 'scan') ? job.started + 25 : deadline;
 while (time() < lockDeadline) {
   if (mkdir(lock, 0700)) { acquired = true; break; }
@@ -125,16 +125,16 @@ if (!acquired) {
   job.status = 'deferred'; job.message = 'ModemReadDeferred: 等待 Modem 控制锁超时，未提交设置'; save(path, job); exit(0);
 }
 writefile(lock + '/pid', '' + pid);
-if (job.status != 'pending') { unlink(lock + '/pid'); rmdir(lock); exit(0); }
+refreshProfile();
+if (job.status != 'pending' || job.profile_key != profileKey) { unlink(lock + '/pid'); rmdir(lock); exit(0); }
 let radioRaw = '', network = null, modeRaw = '';
 const qmiModes = __QMI_MODES__;
 function budget(maximum) { return max(1, min(maximum, deadline - time())); }
 function queryRadio() {
-  let raw = bounded('sms_tool -d ' + port + ' at ' + "'AT+CFUN?'", budget(5));
-  let found = match(raw, /\+CFUN:\s*([0-9]+)\s*(\r?\n|$)/);
-  if (!found) return null;
+  let raw = bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileCommand('radio')), budget(5));
+  let found = {}; try { found = profileRow('radio', raw); } catch(e) { return null; }
   radioRaw = raw;
-  return +found[1];
+  return found.functionality;
 }
 function readNetwork() {
   let dump = null;
@@ -222,9 +222,6 @@ function updateSnapshot() {
   if (modeRaw) { try { modeReply(modeRaw); snapshot.raw.mode = modeRaw; snapshot.sampled.mode = time(); } catch(e) {} }
   if (radioRaw) {
     snapshot.raw.radio = radioRaw; snapshot.sampled.radio = time();
-    let line = match(radioRaw, /\+CFUN:\s*[0-9]+/)[0];
-    snapshot.raw.status = replace(snapshot.raw.status || '', /\+CFUN:\s*[0-9]+/, line);
-    if (index(snapshot.raw.status, '+CFUN:') < 0) snapshot.raw.status += '\n' + line + '\n';
     // Preserve badge data; only schedule the changed radio group for refresh.
     if (job.kind == 'airplane') {
       snapshot.sampled.status = time() - cacheSeconds.status;
@@ -250,11 +247,12 @@ function apnLog(message) {
   save(directory + '/apn-job.json', { device: port, interface: iface, logs: job.logs });
 }
 try {
+  requireProfile();
   if (job.kind == 'apn') {
     let settings = apnSettings(), target = apnValidate(job.target);
-    let identity = bounded('sms_tool -d ' + port + ' at ' + apnQuote('AT+CPIN?;+QCCID'), budget(5));
-    let iccid = match(identity, /\+QCCID:\s*([0-9]{18,22})/);
-    if (!iccid || index(identity, 'READY') < 0) die('SIM 未就绪，未修改 APN');
+    let identity = bounded('sms_tool -d ' + port + ' at ' + apnQuote(profileBatch(['simPin','iccid'])), budget(5));
+    let iccid = profileRow('iccid', identity).iccid;
+    if (!iccid || profileRow('simPin', identity).pin_required != profile.simReadyValue) die('SIM 未就绪，未修改 APN');
     if (queryRadio() != 1) die('请先关闭飞行模式再保存并重拨');
     apnLog('已确认 SIM，正在保存 wwan APN 配置');
     let commands = [];
@@ -264,7 +262,7 @@ try {
     for (let key, value in target) if (apnUci(key) != value) die('APN 配置回读不一致');
     mkdir('/etc/cpe-status', 0700);
     let overrides = readJSON(apnOverridePath) || {};
-    overrides[iccid[1]] = target; save(apnOverridePath, overrides);
+    overrides[iccid] = target; save(apnOverridePath, overrides);
     save(directory + '/wwan-manager.json', { status: 'ready', message: '已使用此 SIM 的自定义 APN', apn: target.apn, carrier: '用户配置', time: time() });
     job.submitted = true;
     save(directory + '/user-data.json', { enabled: true });
@@ -284,8 +282,8 @@ try {
       command('sleep 2');
     }
     if (!networkReady(true)) die('ModemReadDeferred: APN 已保存并提交重拨，尚未确认 IP 地址');
-    let raw = bounded('sms_tool -d ' + port + ' at ' + apnQuote('AT+CGDCONT?;+CGACT?'), budget(5));
-    if (index(raw, '+CGACT:') >= 0) save(directory + '/apn-active.json', { device: port, ...apnActive(raw) });
+    let raw = bounded('sms_tool -d ' + port + ' at ' + apnQuote(profileBatch(['contexts','contextsActive'])), budget(5));
+    if (length(profileParse('contextsActive', raw))) save(directory + '/apn-active.json', { device: port, ...apnActive(raw) });
     job.data = { settings: apnSettings(), ...(readJSON(directory + '/apn-active.json') || { active: false }), logs: job.logs };
     job.status = 'ok'; job.message = 'APN 已保存，wwan 已重新连接';
   } else if (longOperator(job.kind)) {
@@ -293,13 +291,13 @@ try {
     if (queryRadio() != 1) die('请先关闭飞行模式');
     let atScript = getenv('CPE_STATUS_OPERATOR_AT_SCRIPT') || '/usr/libexec/cpe-status-operator-at';
     if (!match(atScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid operator AT executable');
-    let cmd = job.kind == 'operator-scan' ? 'AT+COPS=?' : job.target == 'auto' ? 'AT+COPS=0' : 'AT+COPS=1,2,"' + job.target + '"';
+    let cmd = job.kind == 'operator-scan' ? profileCommand('operatorScan') : job.target == 'auto' ? profileCommand('operatorAuto') : profileCommand('operatorManual', { plmn: job.target });
     job.at_command = cmd; job.submitted = true;
     let raw = bounded("CPE_OPERATOR_COMMAND='" + cmd + "' gcom -d " + port + ' -s ' + atScript, budget(185));
     job.at_reply = raw;
     if (job.kind == 'operator-scan') {
-      if (atError(raw) || !match(raw, /(^|\n)\s*OK\s*(\n|$)/) || index(raw, '+COPS:') < 0) die('运营商扫描失败：' + (atError(raw) || '未完整结束或超时') + '；保留原列表');
-      save(directory + '/operator-scan.json', { device: port, raw, sampled_at: time() });
+      if (atError(raw) || !match(raw, /(^|\n)\s*OK\s*(\n|$)/)) die('运营商扫描失败：' + (atError(raw) || '未完整结束或超时') + '；保留原列表');
+      save(directory + '/operator-scan.json', { device: port, raw, records: profileParse('operatorScan', raw), sampled_at: time() });
       job.status = 'ok'; job.message = '运营商扫描完成';
       try { job.data = readOperator(); } catch(e) {}
     } else {
@@ -334,40 +332,39 @@ try {
     if (!match(scanScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid scan executable');
     job.submitted = true;
     // Leave five seconds to collect OK after the modem's 180-second scan.
-    let raw = bounded('gcom -d ' + port + ' -s ' + scanScript, budget(185));
+    let raw = bounded('CPE_SCAN_COMMAND=' + profileQuote(profileCommand('cellScan')) + ' gcom -d ' + port + ' -s ' + scanScript, budget(185));
     if (atError(raw)) die('小区扫描失败：' + atError(raw));
     if (!match(raw, /(^|\n)\s*OK\s*(\n|$)/)) die('小区扫描未完整结束或已超时，保留原列表');
-    job.data = { raw, sampled_at: time() };
-    save(directory + '/cell-scan.json', { device: port, raw, sampled_at: job.data.sampled_at });
+    job.data = { raw, records: profileParse('cellScan', raw), sampled_at: time() };
+    save(directory + '/cell-scan.json', { device: port, raw, records: job.data.records, sampled_at: job.data.sampled_at });
     job.status = 'ok'; job.message = '扫描完成，列表已固定；再次扫描才会更新';
   } else if (job.kind == 'mode') {
     requireRm500q();
-    modeRaw = radioAt('AT+QNWPREFCFG="mode_pref"');
+    modeRaw = radioAt(profileCommand('mode'));
     if (modeReply(modeRaw) != job.target) {
       job.submitted = true;
-      let raw = radioAt('AT+QNWPREFCFG="mode_pref",' + job.target);
+      let raw = radioAt(profileCommand('modeSet', { mode: job.target }));
       job.at_reply = raw;
       // Even ERROR/timeout is followed by a real query; never assume success.
-      modeRaw = radioAt('AT+QNWPREFCFG="mode_pref"');
+      modeRaw = radioAt(profileCommand('mode'));
       if (atError(raw)) die('网络模式设置失败：' + atError(raw));
-      while (modeReply(modeRaw) != job.target && time() < deadline - 6) { command('sleep 2'); modeRaw = radioAt('AT+QNWPREFCFG="mode_pref"'); }
+      while (modeReply(modeRaw) != job.target && time() < deadline - 6) { command('sleep 2'); modeRaw = radioAt(profileCommand('mode')); }
     }
     if (modeReply(modeRaw) != job.target) die('ModemReadDeferred: 已提交网络模式，尚未确认设置');
     let wasActive = readNetwork().up == true || network.parent.pending == true;
     if (persistQmiMode(job.target) && wasActive) {
       setNetwork(true);
       waitNetwork(true);
-      modeRaw = radioAt('AT+QNWPREFCFG="mode_pref"');
+      modeRaw = radioAt(profileCommand('mode'));
     }
     job.data = { mode: modeReply(modeRaw) };
     if (job.data.mode != job.target) die('ModemReadDeferred: OpenWrt已保存模式，重拨后尚未确认模块制式');
     job.status = 'ok'; job.message = job.qmi_mode ? '模块已确认网络模式，已保存到OpenWrt QMI拨号配置' : '模块已确认网络模式，重新注册可能需要一些时间';
   } else if (job.kind == 'cell') {
     requireRm500q();
-    let target = job.target, name = target.rat == 'lte' ? 'common/4g' : 'common/5g';
-    if (target.action == 'lock') job.preflight = radioAt('AT+QENG="servingcell"');
-    let values = target.action == 'unlock' ? '0' : target.rat == 'lte' ? '1,' + target.arfcn + ',' + target.pci : target.pci + ',' + target.arfcn + ',' + target.scs_khz + ',' + target.band;
-    job.at_command = 'AT+QNWLOCK="' + name + '",' + values;
+    let target = job.target;
+    if (target.action == 'lock') job.preflight = radioAt(profileCommand('serving'));
+    job.at_command = profileCommand(target.rat == 'lte' ? target.action == 'unlock' ? 'lteCellUnlock' : 'lteCellLockSet' : target.action == 'unlock' ? 'nrCellUnlock' : 'nrCellLockSet', { arfcn: '' + target.arfcn, pci: '' + target.pci, band: '' + target.band, scs: '' + target.scs_khz });
     job.submitted = true;
     let raw = radioAt(job.at_command); job.at_reply = raw;
     job.data = readCellLocks();
@@ -386,7 +383,7 @@ try {
       if (join(':', before.enabled[key]) == join(':', job.target[key])) continue;
       if (time() >= deadline - 6) die('ModemReadDeferred: 等待频段设置确认超时');
       job.submitted = true;
-      let raw = bandAt('AT+QNWPREFCFG="' + name + '",' + join(':', job.target[key]));
+      let raw = bandAt(profileCommand(name.write, { bands: join(':', job.target[key]) }));
       if (match(raw, /(^|\n)(ERROR|\+CME ERROR:)/)) die('模块拒绝频段设置：' + key);
       // Always read back, including replies without OK (sms_tool strips it).
       let confirmed = readBands();
@@ -415,10 +412,10 @@ try {
       // Stop auto-dial before disabling RF; QMI setup forces the modem online.
       if (!networkReady(false)) { setNetwork(false); waitNetwork(false); }
     }
-    let target = job.target ? 4 : 1;
+    let target = job.target ? profile.radioStates.flight : profile.radioStates.online;
     if (before != target) {
       job.submitted = true;
-      let raw = bounded('sms_tool -d ' + port + ' at ' + "'AT+CFUN=" + target + "'", budget(15));
+      let raw = bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileCommand('airplaneSet', { functionality: '' + target })), budget(15));
       if (match(raw, /(^|\n)(ERROR|\+CME ERROR:)/)) die('模块拒绝射频切换请求');
       waitRadio(target);
     }

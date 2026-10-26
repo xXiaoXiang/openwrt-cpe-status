@@ -1,3 +1,4 @@
+import { profileFixture } from './profile-fixture.ts'
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile, readFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
@@ -18,7 +19,8 @@ if(kind=='sms_tool') {
   let cmd=args[length(args)-1];
   if(cmd=='recv') {print(index(args,'SM')>=0 ? '{"msg":[]}' : readfile(root+'/messages.json'));exit(0);}
   if(index(args,'send')>=0) {print('sms sent successfully: 1\n');exit(0);}
-  if(cmd=='AT+CPIN?;+QCCID') print('+CPIN: READY\n+QCCID: 8985200123456789012\n');
+  if(cmd=='AT+CGMM') print('RM500Q-GL\n');
+  else if(cmd=='AT+CPIN?;+QCCID') print('+CPIN: READY\n+QCCID: 8985200123456789012\n');
   else if(cmd=='AT+CIMI') print('454001234567890\n');
   else if(cmd=='AT+CRSM=176,28589,0,0,4') print('+CRSM: 144,0,"00000002"\n');
   else if(cmd=='AT+CRSM=176,28478,0,0,1') print('+CRSM: 144,0,"FF"\n');
@@ -47,9 +49,10 @@ manager = manager.replace("  if (startup) { startup.configured = false; startup.
 manager = manager.replace('while (true) { tick(); sleep(2000); }', 'tick();')
 const files = { messaging, manager, speed: speedSampler, 'speed-settings': speedSettings, collector: statusCollector, fake }
 const entries = compileApns(await readFile('data/apns-conf_8.xml', 'utf8'))
-const script = ['set -eu', 'umask 077', `mkdir -p ${root}/bin ${root}/cache ${root}/persistent`,
+const script = [profileFixture(root),'set -eu', 'umask 077', `mkdir -p ${root}/bin ${root}/cache ${root}/persistent`,
   ...Object.entries(files).flatMap(([name, content], i) => [`cat > ${root}/${name} <<'CPE_SERVICE_${i}'`, content, `CPE_SERVICE_${i}`, `chmod 700 ${root}/${name}`, `ucode -c -o /dev/null ${root}/${name}`]),
   ...['sms_tool', 'uci', 'ifup', 'ifdown', 'gcom', 'ubus'].flatMap(name => [`printf '#!/bin/sh\nexec ${root}/fake ${name} "$@"\n' > ${root}/bin/${name}`, `chmod 700 ${root}/bin/${name}`]),
+  `printf '%s' '{"apns":[]}' >${root}/persistent/apns.local.json`,
   `cat >${root}/apns.json <<'CPE_APNS'`, JSON.stringify(entries), 'CPE_APNS',
   `printf '%s' '{"proto":"qmi","apn":"old-apn","modes":"lte,5gnr"}' >${root}/uci.json`,
   `printf '%s' '{"device":"/dev/ttyUSB2","networkInterface":"wwan","smsStorage":"${root}/sms"}' >${root}/config.json`,
@@ -88,7 +91,7 @@ const script = ['set -eu', 'umask 077', `mkdir -p ${root}/bin ${root}/cache ${ro
   `echo '>>> speed'; ${root}/speed-settings 1000; ${root}/speed & sampler=$!; sleep 2; kill "$sampler"; cat ${root}/cache/speed.json; echo`,
   `echo '>>> done'`,
 ].join('\n') + '\n'
-const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 child.stdin.end(script)
 let stdout = '', stderr = ''
 child.stdout.on('data', value => { stdout += value }); child.stderr.on('data', value => { stderr += value })

@@ -1,3 +1,6 @@
+import type { ModemProfile } from './modem-profile.ts'
+import { renderCommand } from '../backend/parser.ts'
+
 export const networkModes = [
   { value: 'AUTO', label: '自动（3G / LTE / 5G）' },
   { value: 'LTE:NR5G', label: 'LTE & 5G NR' },
@@ -24,12 +27,19 @@ export function cellTarget(value: { tech?: string; arfcn?: string | number; pci?
   const scs = value.scs_khz ?? (value.scs != null && integer(value.scs, 0, 4) ? 15 * 2 ** value.scs : undefined)
   return { rat, arfcn, pci, ...(rat === 'nr' && integer(band, 1, 1024) ? { band } : {}), ...(rat === 'nr' && scs != null ? { scs_khz: scs } : {}) }
 }
-export function cellLockParams(body: CellLockRequest): string[] {
+export function cellLockCommand(profile: ModemProfile, body: CellLockRequest): string {
+  const name = body.rat === 'lte' ? body.action === 'unlock' ? 'lteCellUnlock' : 'lteCellLockSet' : body.action === 'unlock' ? 'nrCellUnlock' : 'nrCellLockSet'
+  const definition = profile.commands[name]
+  if (!definition) throw new Error('模块适配未提供此锁定操作')
+  return renderCommand(definition, { arfcn: String(body.cell?.arfcn), pci: String(body.cell?.pci), band: String(body.cell?.band), scs: String(body.cell?.scs_khz) })
+}
+export function cellLockParams(body: CellLockRequest, profile?: ModemProfile): string[] {
   if (!['lte', 'nr'].includes(body.rat) || !['lock', 'unlock'].includes(body.action)) throw new Error('无效的锁小区操作')
+  if (profile) cellLockCommand(profile, body)
   if (body.action === 'unlock') return ['cell', body.rat, 'unlock']
   const cell = body.cell
   if (!cell || cell.rat !== body.rat || !integer(cell.arfcn, cell.rat === 'lte' ? 0 : 1, cell.rat === 'lte' ? 262143 : 3279165) || !integer(cell.pci, 0, cell.rat === 'lte' ? 503 : 1007)) throw new Error('小区频点或 PCI 无效')
-  if (cell.rat === 'nr' && (!integer(cell.band, 1, 255) || ![15, 30].includes(cell.scs_khz ?? 0) || cell.pci === 0)) throw new Error('RM500Q NR 锁定需要有效 Band、15/30 kHz SCS 和非零 PCI（PCI=0 表示解锁）')
+  if (cell.rat === 'nr' && (!integer(cell.band, 1, 1024) || ![15,30,60,120,240].includes(cell.scs_khz ?? 0))) throw new Error('NR 锁定需要有效 Band 与 SCS')
   return ['cell', cell.rat, 'lock', String(cell.arfcn), String(cell.pci), ...(cell.rat === 'nr' ? [String(cell.band), String(cell.scs_khz)] : [])]
 }
 export function lockMatches(state: CellLockState | undefined, body: CellLockRequest) {

@@ -1,3 +1,5 @@
+import { profileFingerprint } from '../../tools/profile-fixture.ts'
+import { rm500qProfile } from '../../adapters/rm500q-profile.ts'
 import type { StatusSnapshot } from '../../shared/status-snapshot.ts'
 
 // Read-only hardware capture: R13 reports both NR enum 7 and NOCONN.
@@ -11,6 +13,7 @@ export const r13NsaCells = '+QENG: "servingcell","NOCONN"\n'
 
 // R13A03 read layouts captured on hardware; subscriber/device IDs and IPs replaced.
 export const r13Snapshot: StatusSnapshot = {
+  profile_key: profileFingerprint(), adapter: rm500qProfile,
   source: 'quectel-sms-tool', device: '/dev/ttyUSB2', stale: false,
   sampled: { status: 1000, cells: 1000, temperature: 1000, identity: 1000, sim: 1000, roaming: 1000 },
   raw: {

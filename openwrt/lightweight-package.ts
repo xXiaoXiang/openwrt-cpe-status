@@ -1,4 +1,4 @@
-import { mkdir, writeFile, cp, readFile } from 'node:fs/promises'
+import { mkdir, writeFile, cp, readFile, readdir } from 'node:fs/promises'
 import { statusCollector } from './status-collector.ts'
 import { roamingControl } from './roaming-control.ts'
 import { modemControl, modemControlResult } from './modem-control.ts'
@@ -11,10 +11,23 @@ import { apnReader } from './apn-control.ts'
 import { messaging } from './messaging.ts'
 import { wwanManager, cpeInit, smsPoll } from './wwan-manager.ts'
 import { compileApns } from '../shared/apn.ts'
+import { validateAdapter } from '../backend/engine.ts'
+import type { ModemProfile } from '../shared/modem-profile.ts'
+import { packageManifest } from '../project.ts'
 import { licenseText } from '../docs/license.ts'
 
 export async function generateLightweightPackage(root: string) {
   const write = async (path: string, content: string) => { const destination = `${root}/${path}`; await mkdir(destination.slice(0, destination.lastIndexOf('/')), { recursive: true }); await writeFile(destination, content) }
+  const modemFiles = (await readdir('modem.d')).filter(name => /^[0-9a-f]{8}\.conf$/.test(name))
+  if (!modemFiles.length) throw new Error('No modem profiles')
+  for (const name of modemFiles) {
+    const contents = await readFile(`modem.d/${name}`, 'utf8')
+    const profile = JSON.parse(contents) as ModemProfile
+    validateAdapter(profile)
+    if (!profile.usbIds?.includes(name.slice(0, 8))) throw new Error(`Profile USB ID mismatch: ${name}`)
+    await write(`files/etc/cpe-status/modem.d/${name}`, contents)
+  }
+  await write('files/etc/cpe-status/apns.local.json', JSON.stringify({ _comment: '用户 APN 扩展，优先于内置数据库；字段 carrier,mcc,mnc,apn,protocol,user,password,authtype,mvno_type,mvno_match_data；MCC/MNC须为字符串保留前导零。网页各SIM设置优先级更高。', apns: [] }, null, 2) + '\n')
   await write('files/usr/libexec/cpe-status-snapshot', statusCollector)
   await write('files/usr/libexec/cpe-status-speed', speedSampler)
   await write('files/usr/libexec/cpe-status-speed-settings', speedSettings)
@@ -63,7 +76,7 @@ return view.extend({ render:function() {
   await cp('build/www', `${root}/files/www/luci-static/resources/cpe-status`, { recursive: true })
   await write('Makefile', `include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-cpe-status
-PKG_VERSION:=0.3.0
+PKG_VERSION:=${packageManifest.version}
 PKG_RELEASE:=0
 PKG_LICENSE:=GPL-3.0-only
 PKGARCH:=all
@@ -72,12 +85,15 @@ define Package/$(PKG_NAME)
   SECTION:=luci
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
-  TITLE:=CPE Status (Quectel monitor)
+  TITLE:=CPE Status (configurable modem monitor)
   DEPENDS:=+luci-base +rpcd-mod-file +ucode +ucode-mod-fs +ucode-mod-ubus +sms-tool +comgt
   CONFLICTS:=luci-app-openwrt-modem
 endef
 define Package/$(PKG_NAME)/conffiles
 /etc/cpe-status.json
+/etc/cpe-status/
+${modemFiles.map(name => '/etc/cpe-status/modem.d/' + name).join('\n')}
+/etc/cpe-status/apns.local.json
 endef
 define Package/$(PKG_NAME)/postinst
 #!/bin/sh
@@ -118,6 +134,7 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_DATA) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-operator-at $(1)/usr/libexec/
 	$(CP) $(PKG_BUILD_DIR)/usr/share/. $(1)/usr/share/
 	$(INSTALL_CONF) $(PKG_BUILD_DIR)/etc/cpe-status.json $(1)/etc/
+	$(CP) $(PKG_BUILD_DIR)/etc/cpe-status $(1)/etc/
 	$(CP) $(PKG_BUILD_DIR)/www/. $(1)/www/
 	find $(1)/usr/share $(1)/www -type d -exec chmod 0755 {} +
 	find $(1)/usr/share $(1)/www -type f -exec chmod 0644 {} +

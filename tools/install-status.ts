@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { resolve, basename, sep } from 'node:path'
 
-const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || 'luci-app-cpe-status-0.3.0-r0.apk')
+const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || 'luci-app-cpe-status-1.0.0-r0.apk')
 if (!apk.startsWith(root + sep) || !/^luci-app-cpe-status-[\d.]+-r\d+\.apk$/.test(basename(apk))) throw new Error('Invalid generated APK path')
 const sshOptions = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts']
 const ssh = (script: string) => execFileSync('ssh', [...sshOptions, 'root@192.168.6.248', 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })

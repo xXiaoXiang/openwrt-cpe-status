@@ -27,7 +27,7 @@ function storeHistory(path, value) { save(path + '/cpe-sms-history.json', value)
 let action = ARGV[0] || 'list', storage = storagePath(config.smsStorage || '/etc/cpe-status/sms');
 mkdir(directory, 0700);
 if (action == 'config' && length(ARGV) == 1) { reply({ status: 'ok', data: { path: storage } }); exit(0); }
-let lock = directory + '/lock';
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
 if (!mkdir(lock, 0700)) {
   let owner = +text(lock + '/pid');
   if (owner && !stat('/proc/' + owner)) { unlink(lock + '/pid'); rmdir(lock); }
@@ -44,7 +44,7 @@ try {
     if (length(ARGV) != 2 || length(at || '') > 512 || !match(at || '', /^AT[ -~]*$/i)) die('只支持单行 AT 命令');
     let raw = bounded('CPE_OPERATOR_COMMAND=' + quote(at) + ' gcom -d ' + port + ' -s /usr/libexec/cpe-status-operator-at 2>&1', 20);
     // Arbitrary commands can alter anything; the next read reconciles caches.
-    let readonly = index(['AT','ATI','AT+CGMI','AT+CGMM','AT+CGMR','AT+CGSN','AT+QCCID','AT+CIMI','AT+CNUM','AT+CSCA?','AT+CPIN?','AT+CFUN?','AT+CSQ','AT+COPS?','AT+CREG?','AT+CEREG?','AT+C5GREG?','AT+QCAINFO','AT+QTEMP'], uc(at)) >= 0 || match(at, /^AT\+QENG="(servingcell|neighbourcell)"$/i);
+    let readonly = false; for (let operation in values(profile?.commands || {})) if (operation.kind == 'read' && uc(operation.command) == uc(at)) readonly = true;
     if (!readonly) {
       let snapshot = readJSON(directory + '/snapshot.json');
       if (snapshot) { snapshot.sampled = {}; delete snapshot.attempted; save(directory + '/snapshot.json', snapshot); }
@@ -74,8 +74,9 @@ try {
     } else if (action == 'send') {
       let number = ARGV[1], body = ARGV[2];
       if (!match(number || '', /^\+?[0-9]{3,20}$/) || !length(body || '') || length(body) > 280 || index(body, '\u001a') >= 0 || index(body, '\u001b') >= 0) die('无效的短信号码或内容');
-      let result = bounded('sms_tool -d ' + port + ' send ' + quote(number) + ' ' + quote(body) + ' 2>&1', 50);
-      if (!match(result, /\+CMGS:|sms sent|message sent/i) || match(result, /ERROR|failed/i)) die('短信未确认发送：' + result);
+      if (profile?.sms?.transport != 'sms-tool-3gpp') die('模块适配未启用标准短信传输');
+      let result = bounded('sms_tool -d ' + port + ' send ' + quote(number) + ' ' + quote(body) + ' 2>&1', profile.sms.sendTimeout);
+      if (!match(result, profileRegex(profile.sms.sentPattern)) || match(result, profileRegex(profile.sms.errorPattern))) die('短信未确认发送：' + result);
       let row = { id: archive.next++, key: 'sent-' + time() + '-' + pid, direction: 'outgoing', phone_number: number, content: body, timestamp: strftime('%Y-%m-%dT%H:%M:%SZ', time()), status: 'sent' };
       push(archive.records, row); storeHistory(storage, archive);
       reply({ status: 'ok', data: { db_id: row.id } });
@@ -86,8 +87,8 @@ try {
       }
       if (action == 'sync' || !last || time() - last.time >= 30) {
         let sim = readJSON(directory + '/sim-identity.json'), identity = sim?.iccid || sim?.imsi || 'unknown';
-        for (let memory in ['ME', 'SM']) {
-          let raw = bounded('sms_tool -d ' + port + ' -s ' + memory + ' -j -f ' + quote('%Y-%m-%dT%H:%M:%SZ') + ' recv 2>/dev/null', 12), value = null;
+        for (let memory in profile?.sms?.transport == 'sms-tool-3gpp' ? profile.sms.memories : []) {
+          let raw = bounded('sms_tool -d ' + port + ' -s ' + memory + ' -j -f ' + quote('%Y-%m-%dT%H:%M:%SZ') + ' recv 2>/dev/null', profile.sms.receiveTimeout), value = null;
           try { value = json(raw); } catch(e) {}
           if (!value || type(value.msg) != 'array') { push(warnings, memory + ' 短信读取暂未成功'); continue; }
           for (let msg in value.msg) {

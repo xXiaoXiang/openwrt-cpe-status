@@ -8,7 +8,7 @@ if (length(ARGV) != 1 || (ARGV[0] != '1' && ARGV[0] != '255')) {
   reply({ status: 'error', message: 'Invalid roaming preference; expected 1 or 255' }); exit(0);
 }
 mkdir(directory, 0700);
-let lock = directory + '/lock', deadline = time() + 10;
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', deadline = time() + 10;
 while (!mkdir(lock, 0700)) {
   let owner = +text(lock + '/pid'), info = stat(lock);
   if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) { unlink(lock + '/pid'); rmdir(lock); continue; }
@@ -19,17 +19,17 @@ writefile(lock + '/pid', '' + pid);
 let submitted = false;
 try {
   let target = +ARGV[0];
-  let query = 'sms_tool -d ' + port + ' at ' + "'AT+QNWPREFCFG=\"roam_pref\"'";
-  let raw = bounded(query, 5), before = match(raw, /\+QNWPREFCFG:\s*"roam_pref",\s*(1|3|255)\s*(\r?\n|$)/);
-  if (!before) die('无法读取模块漫游偏好，未提交设置');
-  if (+before[1] != target) {
+  requireProfile();
+  let query = 'sms_tool -d ' + port + ' at ' + profileQuote(profileCommand('roamingPreference'));
+  let raw = bounded(query, 5), before = profileRow('roamingPreference', raw).roam_pref;
+  if (before == null) die('无法读取模块漫游偏好，未提交设置');
+  if (before != target) {
     submitted = true;
-    bounded('sms_tool -d ' + port + ' at ' + "'AT+QNWPREFCFG=\"roam_pref\"," + target + "'", 5);
+    bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileCommand('roamingSet', { preference: '' + target })), 5);
   }
-  // sms_tool can strip OK; only a real readback proves the requested state.
   raw = bounded(query, 5);
-  let confirmed = match(raw, /\+QNWPREFCFG:\s*"roam_pref",\s*(1|3|255)\s*(\r?\n|$)/);
-  if (!confirmed || +confirmed[1] != target) die('模块尚未确认漫游偏好，请稍后检查状态');
+  let confirmed = profileRow('roamingPreference', raw).roam_pref;
+  if (confirmed != target) die('模块尚未确认漫游偏好，请稍后检查状态');
   let snapshot = readJSON(directory + '/snapshot.json'), sampled = time();
   if (snapshot && snapshot.device == port) {
     snapshot.raw.roaming = raw; snapshot.sampled.roaming = sampled;

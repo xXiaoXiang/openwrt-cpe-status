@@ -1,3 +1,4 @@
+import { profileFixture } from './profile-fixture.ts'
 import { spawn } from 'node:child_process'
 import { mkdir, writeFile } from 'node:fs/promises'
 import assert from 'node:assert/strict'
@@ -76,7 +77,7 @@ else if(kind=='ubus') {
   else exit(1);
 } else exit(1);
 `.replace('__QMI_MODES__', JSON.stringify(qmiNetworkModes))
-const script = [
+const script = [profileFixture(root),
   'set -eu', 'umask 077', `mkdir -p ${root}/bin ${root}/cache`,
   ...Object.entries({ locks: cellLockReader, control: modemControl, result: modemControlResult, 'bin/sms_tool': fakeAt, host, 'scan-result': cellScanReader, 'scan-shell': cellScanAt, 'operators': operatorReader, 'operator-shell': operatorAt,
     'scan-at': '#!/bin/sh\nsleep 7\nexec sms_tool -d /dev/ttyUSB2 at \'AT+QSCAN=3,1\'\n',
@@ -166,7 +167,7 @@ echo '>>> commands'; cat "$CPE_RADIO_TEST_DIR/commands"
 echo '>>> done'
 `,
 ].join('\n')
-const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 child.stdin.end(script + '\n')
 let stdout = '', stderr = ''
 child.stdout.on('data', part => { stdout += part.toString() }); child.stderr.on('data', part => { stderr += part.toString() })

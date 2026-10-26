@@ -9,10 +9,10 @@ export default function SmsStorage() {
   const [path, setPath] = useState('/etc/cpe-status/sms'), [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<{ error: boolean; text: string }>()
   useEffect(() => {
-    if (capability?.id !== 'quectel-status-lite') return
+    if (!capability?.status_only) return
     void request<ApiResponse<{ path: string }>>('/sms/storage').then(value => { if (value.data?.path) setPath(value.data.path) }).catch(() => {})
   }, [capability?.id])
-  if (capability?.id !== 'quectel-status-lite') return null
+  if (!capability?.status_only) return null
   const save = async () => {
     setBusy(true); setNotice(undefined)
     try {

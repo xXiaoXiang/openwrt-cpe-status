@@ -4,46 +4,32 @@ import { networkModes } from '../shared/radio-settings.ts'
 export const radioSettingsRuntime = String.raw`
 const allowedModes = __MODES__;
 function radioAt(cmd) { return bounded('sms_tool -d ' + port + ' at ' + "'" + cmd + "'", 5); }
-function requireRm500q() {
-  let snapshot = readJSON(directory + '/snapshot.json');
-  if (snapshot?.device == port && time() - (snapshot.sampled.identity || 0) < cacheSeconds.identity && match(snapshot.raw.identity || '', /(^|\n)RM500Q-GL\s*(\r?\n|$)/)) return;
-  if (!match(radioAt('AT+CGMM'), /(^|\n)RM500Q-GL\s*(\r?\n|$)/)) die('当前设置仅适配 RM500Q-GL');
-}
+function requireRm500q() { return requireProfile(); }
 function atError(raw) { return match(raw, /(^|\n)\s*(ERROR|\+CME ERROR:[^\r\n]*)/)?.[2] || ''; }
 function modeReply(raw) {
-  let found = match(raw, /\+QNWPREFCFG:\s*"mode_pref",\s*([A-Z0-9:]+)\s*(\r?\n|$)/i);
-  if (!found || atError(raw)) die('无法确认模块网络模式：' + (atError(raw) || trim(raw)));
-  return uc(found[1]);
+  let mode = profileRow('mode', raw).mode;
+  if (!mode || atError(raw)) die('无法确认模块网络模式：' + (atError(raw) || trim(raw)));
+  return uc(mode);
 }
 function parseLock(raw, rat) {
-  let result = { status: 'error', cells: [], raw }, name = rat == 'lte' ? 'common/4g' : 'common/5g';
-  let found = null;
-  for (let line in split(raw, '\n')) {
-    let row = match(trim(line), /^\+QNWLOCK:\s*"(common\/[45]g)",\s*([0-9, ]+)$/);
-    if (row && row[1] == name) { found = split(replace(row[2], ' ', ''), ','); break; }
-  }
-  if (!found || atError(raw)) { result.message = atError(raw) || '模块未返回可确认的锁定状态'; return result; }
-  let nums = map(found, value => +value);
-  if (rat == 'lte') {
-    let count = nums[0];
-    if (count > 10 || length(nums) != 1 + count * 2) { result.message = 'LTE锁定回读格式无效'; return result; }
-    for (let i = 0; i < count; i++) {
-      let arfcn = nums[1 + i * 2], pci = nums[2 + i * 2];
-      if (arfcn > 262143 || pci > 503) { result.message = 'LTE锁定回读参数超出范围'; return result; }
-      push(result.cells, { rat, arfcn, pci });
+  let result = { status: 'error', cells: [], raw };
+  try {
+    if (atError(raw)) die(atError(raw));
+    let rows = profileParse(rat == 'lte' ? 'lteCellLock' : 'nrCellLock', raw);
+    if (length(rows) == 1 && rows[0].count === 0) result.count = 0;
+    else {
+      for (let row in rows) {
+        if (row.rat != rat || row.arfcn == null || row.pci == null) die('锁定回读缺少小区参数');
+        push(result.cells, row);
+      }
+      result.count = length(result.cells);
     }
-    result.count = count;
-  } else {
-    // RM500Q R13 QNWLOCK=? confirms PCI,NR-ARFCN,SCS(kHz),Band; no count.
-    if (nums[0] == 0 && (length(nums) == 1 || (length(nums) == 4 && nums[1] == 0))) result.count = 0;
-    else if (length(nums) == 4 && nums[0] <= 1007 && nums[1] > 0 && nums[1] <= 3279165 && index([15,30,60,120,240], nums[2]) >= 0 && nums[3] > 0 && nums[3] <= 1024) {
-      result.count = 1; push(result.cells, { rat, pci: nums[0], arfcn: nums[1], scs_khz: nums[2], band: nums[3] });
-    } else { result.message = 'NR锁定回读格式无效'; return result; }
-  }
-  result.status = 'ok'; return result;
+    result.status = 'ok';
+  } catch(e) { result.message = '' + e; }
+  return result;
 }
 function readCellLocks() {
-  let result = { device: port, lte: parseLock(radioAt('AT+QNWLOCK="common/4g"'), 'lte'), nr: parseLock(radioAt('AT+QNWLOCK="common/5g"'), 'nr'), sampled_at: time() };
+  let result = { device: port, lte: parseLock(radioAt(profileCommand('lteCellLock')), 'lte'), nr: parseLock(radioAt(profileCommand('nrCellLock')), 'nr'), sampled_at: time() };
   let previous = readJSON(directory + '/cell-locks.json');
   for (let rat in ['lte', 'nr']) if (result[rat].status != 'ok' && previous?.device == port) {
     result[rat].previous = previous[rat]?.status == 'ok' ? previous[rat] : previous[rat]?.previous;
@@ -82,7 +68,7 @@ if (ARGV[0] != '--refresh') {
   else reply({ status: 'deferred', message: '正在读取小区锁定状态', retry_after_ms: 2000 });
   exit(0);
 }
-let lock = directory + '/lock', acquired = mkdir(lock, 0700);
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', acquired = mkdir(lock, 0700);
 if (!acquired) {
   let owner = +text(lock + '/pid'), info = stat(lock);
   if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) { unlink(lock + '/pid'); rmdir(lock); acquired = mkdir(lock, 0700); }

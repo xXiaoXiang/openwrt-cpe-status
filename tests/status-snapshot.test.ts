@@ -115,7 +115,7 @@ test('lightweight collection has only fixed read commands and separate TTLs, wit
   for (const group of Object.values(statusGroups)) for (const name of group.names) assert.equal(rm500q.commands[name].kind, 'read')
   assert.ok(!statusCollector.includes('lpac'))
   assert.ok(!statusCollector.includes('+COPS='))
-  assert.ok(statusCollector.includes('AT+QENG=\\"servingcell\\"'))
+  assert.ok(statusCollector.includes('profileBatch(names)'))
 })
 
 test('roaming policy is separate from current roaming registration; unknown preference remains unknown', () => {

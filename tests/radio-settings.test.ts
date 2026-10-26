@@ -1,11 +1,19 @@
+import { parseReply } from '../backend/parser.ts'
+import { rm500qProfile } from '../adapters/rm500q-profile.ts'
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { cellTarget, cellLockParams, lockMatches, networkModes, type CellLockState } from '../shared/radio-settings.ts'
+import { cellTarget, cellLockParams as validateCellLock, lockMatches, networkModes, type CellLockState } from '../shared/radio-settings.ts'
 import { snapshotRoutes } from '../shared/status-snapshot.ts'
 import { r13Snapshot } from './fixtures/rm500q-r13.ts'
 import { rm500q } from '../adapters/quectel-rm500q-gl-r11.ts'
 import { cacheSeconds } from '../shared/cache-policy.ts'
-import { parseCellScan } from '../shared/cell-scan.ts'
+import { parseCellScan as normalizeResult } from '../shared/cell-scan.ts'
+
+const cellLockParams = (body: Parameters<typeof validateCellLock>[0]) => validateCellLock(body, rm500qProfile)
+function parseCellScan(raw: string) {
+  if (!/^\s*OK\s*$/m.test(raw) || /^\s*(ERROR|\+CME ERROR:)/m.test(raw)) throw new Error('扫描未完整结束')
+  try { return normalizeResult(raw, parseReply(rm500qProfile.commands.cellScan, raw)) } catch (error) { throw new Error('扫描格式无法识别：' + error) }
+}
 
 test('NR QENG SCS enum becomes kHz; NSA rows remain actionable', () => {
   const cell = cellTarget({ tech: 'nr', arfcn: 726432, pci: 570, band: 'n79', scs: 1 })!

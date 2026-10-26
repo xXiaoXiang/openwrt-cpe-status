@@ -1,30 +1,23 @@
-import { rm500q } from '../adapters/quectel-rm500q-gl-r11.ts'
+import { rm500qProfile } from '../adapters/rm500q-profile.ts'
+import { profileRuntime } from './profile-runtime.ts'
 import { cacheSeconds } from '../shared/cache-policy.ts'
 
-export const statusGroups = {
-  status: { ttl: cacheSeconds.status, names: ['simPin', 'signal', 'operator', 'registration', 'registration5g', 'provider'] },
-  radio: { ttl: cacheSeconds.radio, names: ['radio'] },
-  cells: { ttl: cacheSeconds.cells, names: ['serving', 'neighbors', 'carriers'] },
-  temperature: { ttl: cacheSeconds.temperature, names: ['temperature'] },
-  identity: { ttl: cacheSeconds.identity, names: ['manufacturer', 'model', 'revision', 'imei'] },
-  sim: { ttl: cacheSeconds.sim, names: ['iccid', 'imsi', 'phone', 'smsCenter'] },
-  roaming: { ttl: cacheSeconds.roaming, names: ['roamingPreference'] },
-  mode: { ttl: cacheSeconds.mode, names: ['mode'] },
-}
-const groups = Object.fromEntries(Object.entries(statusGroups).map(([key, group]) => [key, { ttl: group.ttl, command: 'AT' + group.names.map(name => rm500q.commands[name].command.slice(2)).join(';') }]))
+export const statusGroups = rm500qProfile.groups
 
 // Generated ucode is executed by rpcd's file.exec. No Node daemon, serial fd
 // owner is needed. Separate write-authorized helpers control roaming/data/RF.
 export const statusRuntime = String.raw`#!/usr/bin/ucode
-import { readfile, writefile, mkdir, rmdir, unlink, rename, stat, popen, glob, readlink, chmod } from 'fs';
+import { readfile, writefile, mkdir, rmdir, unlink, rename, stat, popen, glob, readlink, chmod, realpath } from 'fs';
 import { connect } from 'ubus';
 const directory = getenv('CPE_STATUS_CACHE') || '/tmp/cpe-status';
 const cacheSeconds = __CACHE_SECONDS__;
 const script = getenv('CPE_STATUS_SCRIPT') || '/usr/libexec/cpe-status-snapshot';
 const configPath = getenv('CPE_STATUS_CONFIG') || '/etc/cpe-status.json';
 const pid = +readlink('/proc/self');
+let profile = null, profileKey = '', profileError = '', usbId = '', profileStamp = '';
 function text(path) { return trim(readfile(path) || ''); }
-function readJSON(path) { try { return json(readfile(path)); } catch(e) { return null; } }
+function profileCache(path) { return index(['snapshot.json','bands.json','band-capabilities.json','cell-locks.json','sim-identity.json','operator-state.json','operator-scan.json','cell-scan.json','apn-active.json','sms-sync.json'], split(path, '/')[length(split(path, '/')) - 1]) >= 0; }
+function readJSON(path) { try { let value = json(readfile(path)); if (profileCache(path) && value.profile_key != profileKey) return null; return value; } catch(e) { return null; } }
 function command(cmd) {
   let stream = popen(cmd, 'r');
   if (!stream) return '';
@@ -33,6 +26,7 @@ function command(cmd) {
   return result;
 }
 function save(path, value) {
+  if (profileCache(path)) value.profile_key = profileKey;
   let temp = path + '.' + pid;
   if (!writefile(temp, sprintf('%J', value))) die('Cannot store snapshot');
   chmod(temp, 0600);
@@ -46,8 +40,9 @@ if (!match(port, /^\/dev\/tty(USB|ACM)[0-9]+$/) || !match(iface, /^[a-zA-Z0-9_]{
 function bounded(cmd, seconds) {
   return command(cmd + ' & child=$!; (sleep ' + seconds + '; kill "$child" 2>/dev/null; sleep 1; kill -9 "$child" 2>/dev/null) >/dev/null 2>&1 & guard=$!; wait "$child"; rc=$?; kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null; exit "$rc"');
 }
-`.replace('__CACHE_SECONDS__', JSON.stringify(cacheSeconds))
-export const statusCollector = statusRuntime + String.raw`const groups = __GROUPS__;
+`.replace('__CACHE_SECONDS__', JSON.stringify(cacheSeconds)) + profileRuntime
+export const statusCollector = statusRuntime + String.raw`if (ARGV[0] == 'profile') { print(sprintf('%J\n', { status: profile ? 'ok' : 'unsupported', data: profile, message: profileError })); exit(0); }
+const groups = profile?.groups || {};
 function host(previous, now) {
   let bus = connect(), system = readJSON(directory + '/system.json');
   if (!system || now - system.time >= cacheSeconds.system) {
@@ -87,7 +82,7 @@ function output(value) {
   print(sprintf('%J\n', value));
 }
 if (!update && fresh) { output(previous); exit(0); }
-let lock = directory + '/lock';
+let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
 if (!mkdir(lock, 0700)) {
   let owner = +text(lock + '/pid');
   if ((owner && stat('/proc/' + owner)) || (!owner && now - stat(lock).mtime < 2)) {
@@ -104,23 +99,27 @@ if (!update && previous) {
   output(previous); exit(0);
 }
 try {
-  let result = previous && previous.device == port ? previous : { raw: {}, sampled: {}, source: 'quectel-sms-tool', device: port };
+  if (!profile) die(profileError);
+  let result = previous && previous.device == port ? previous : { raw: {}, sampled: {}, source: 'modem-profile', device: port };
+  result.adapter = profile; result.usb_id = usbId;
   for (let key, group in groups) {
     // CFUN remains queryable in flight mode. Avoid repeated serving/neighbor
     // queries while RF is off; the API explicitly returns an empty cell list.
-    if (key == 'cells' && match(result.raw.radio || result.raw.status || '', /\+CFUN:\s*[04]\s*(\r?\n|$)/)) continue;
-    if (key == 'sim' && match(result.raw.status || '', /(SIM not inserted|\+CME ERROR: *10([^0-9]|$))/i)) continue;
+    if (key == 'cells' && index(profile.radioStates.off, result.raw.radio ? profileRow('radio', result.raw.radio).functionality : -1) >= 0) continue;
+    if (key == 'sim' && profileAbsent(result.raw.status)) continue;
     if (result.sampled[key] && now - result.sampled[key] < group.ttl) continue;
     if (result.attempted?.[key] && now - result.attempted[key] < cacheSeconds.failure) continue;
     let identity = key == 'sim' ? readJSON(directory + '/sim-identity.json') : null;
     let reuse = identity?.present && identity.iccid && identity.imsi && now - identity.checked < 60;
-    let atCommand = reuse ? 'AT+CNUM;+CSCA?' : group.command;
-    let raw = bounded('sms_tool -d ' + port + ' at ' + "'" + atCommand + "'", 5);
-    if (reuse) raw = '+QCCID: ' + identity.iccid + '\n' + identity.imsi + '\n' + raw;
-    let expected = { status: '+CPIN:', radio: '+CFUN:', cells: '+QENG:', temperature: '+QTEMP:', identity: 'RM500Q', sim: '+QCCID:', roaming: '+QNWPREFCFG:', mode: '+QNWPREFCFG:' };
-    if (index(raw, expected[key]) < 0) {
-      if ((key == 'sim' || key == 'status') && match(raw, /(SIM not inserted|\+CME ERROR: *10([^0-9]|$))/i)) {
-        result.raw[key] = raw; result.sampled[key] = now; result.raw.sim = ''; result.sampled.sim = 0; continue;
+    let names = reuse ? filter(group.names, name => name != 'iccid' && name != 'imsi') : group.names;
+    let raw = bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileBatch(names)), 5);
+    let valid = true;
+    try {
+      for (let name in group.required || [group.names[0]]) if (!(reuse && (name == 'iccid' || name == 'imsi'))) profileParse(name, raw);
+    } catch(e) { valid = false; }
+    if (!valid) {
+      if ((key == 'sim' || key == 'status') && profileAbsent(raw)) {
+        result.raw[key] = raw; result.sampled[key] = now; result.raw.sim = ''; delete result.sim_identity; result.sampled.sim = 0; continue;
       }
       if (!result.raw[key]) result.raw[key] = raw;
       result.warnings ||= {};
@@ -130,6 +129,7 @@ try {
       continue;
     }
     result.raw[key] = raw; result.sampled[key] = now;
+    if (reuse) result.sim_identity = { iccid: identity.iccid, imsi: identity.imsi }; else if (key == 'sim') delete result.sim_identity;
     if (result.warnings) delete result.warnings[key];
   }
   result.host = host(previous?.host, time());
@@ -142,4 +142,4 @@ try {
   print(sprintf('%J\n', previous || { error: 'ModemReadDeferred: ' + e, retry_after_ms: 10000 }));
 }
 unlink(lock + '/pid'); rmdir(lock);
-`.replace('__GROUPS__', JSON.stringify(groups))
+`

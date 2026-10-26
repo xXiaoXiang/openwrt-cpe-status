@@ -70,7 +70,7 @@ export function validateAdapter(value: unknown): asserts value is ModemAdapter {
   if (!adapter || adapter.schemaVersion !== 1 || typeof adapter.id !== 'string' || typeof adapter.modelPattern !== 'string' || !adapter.commands || typeof adapter.commands !== 'object') throw new Error('Invalid adapter header')
   new RegExp(adapter.modelPattern)
   for (const definition of Object.values(adapter.commands)) {
-    if (typeof definition.command !== 'string' || !definition.command.startsWith('AT') || /[\r\n\x00-\x1f]/.test(definition.command) || !['read', 'write'].includes(definition.kind) || !Number.isFinite(definition.ttlMs) || definition.ttlMs < 0 || !Number.isFinite(definition.timeoutMs) || definition.timeoutMs <= 0 || definition.timeoutMs > 180_000 || !Array.isArray(definition.rules)) throw new Error('Invalid AT definition')
+    if (typeof definition.command !== 'string' || !definition.command.startsWith('AT') || /[\r\n\x00-\x1f]/.test(definition.command) || !['read', 'write'].includes(definition.kind) || !Number.isFinite(definition.ttlMs) || definition.ttlMs < 0 || !Number.isFinite(definition.timeoutMs) || definition.timeoutMs <= 0 || definition.timeoutMs > 240_000 || !Array.isArray(definition.rules)) throw new Error('Invalid AT definition')
     for (const rule of definition.rules) {
       if (!['csv', 'captures'].includes(rule.format) || typeof rule.fields !== 'object') throw new Error('Invalid extraction rule')
       new RegExp(rule.regex)

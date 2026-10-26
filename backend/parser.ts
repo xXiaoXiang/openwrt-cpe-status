@@ -18,6 +18,7 @@ export function csv(text: string): string[] {
 }
 
 function extract(raw: string | undefined, rule: FieldRule): Scalar {
+  if (raw !== undefined && rule.pattern) raw = new RegExp(rule.pattern).exec(raw)?.[1]
   if (raw === undefined || raw === '' || rule.unknown?.includes(raw)) {
     if (rule.optional) return null
     throw new Error(`Missing AT field ${rule.index}`)
@@ -45,11 +46,19 @@ export function parseReply(definition: CommandDefinition, reply: string): Record
     for (const rule of definition.rules) {
       const match = new RegExp(rule.regex).exec(line)
       if (!match) continue
-      const fields = rule.format === 'csv' ? csv(match[1]) : match.slice(1)
-      if (rule.minimumFields && fields.length < rule.minimumFields) throw new Error('AT reply layout does not match the adapter')
-      const record: Record<string, Scalar> = { ...rule.constants }
-      for (const [key, field] of Object.entries(rule.fields)) record[key] = extract(fields[field.index], field)
-      records.push(record)
+      const pieces = rule.segments ? [...match[1].matchAll(new RegExp(rule.segments, 'g'))].map(value => value[1]) : [match[1]]
+      for (const piece of pieces) {
+        const fields = rule.format === 'csv' ? csv(piece) : match.slice(1)
+        if (rule.minimumFields && fields.length < rule.minimumFields) throw new Error('AT reply layout does not match the adapter')
+        const repeat = rule.repeat, count = repeat ? Number(fields[repeat.countIndex]) : 1
+        if (!Number.isInteger(count) || count < 0 || (repeat && (count > repeat.maximum || fields.length !== repeat.start + count * repeat.stride))) throw new Error('Invalid repeated AT fields')
+        for (let n = 0; n < count; n++) {
+          const values = repeat ? fields.slice(repeat.start + n * repeat.stride) : fields
+          const record: Record<string, Scalar> = { ...rule.constants }
+          for (const [key, field] of Object.entries(rule.fields)) record[key] = extract(values[field.index], field)
+          records.push(record)
+        }
+      }
       break
     }
   }

@@ -18,14 +18,8 @@ function apnSettings() {
 function apnActive(raw) {
   let preferred = apnUci('apn'), contexts = [];
   let active = {};
-  for (let line in split(raw, '\n')) {
-    let row = match(line, /\+CGACT:\s*([0-9]+),\s*1/);
-    if (row) active[row[1]] = true;
-  }
-  for (let line in split(raw, '\n')) {
-    let row = match(line, /\+CGDCONT:\s*([0-9]+),\s*"([^"]+)",\s*"([^"]*)"/);
-    if (row && active[row[1]]) push(contexts, { active: true, active_apn: row[3], active_protocol: row[2], sampled_at: time() });
-  }
+  for (let row in profileParse('contextsActive', raw)) if (row.active) active[row.cid] = true;
+  for (let row in profileParse('contexts', raw)) if (active[row.cid]) push(contexts, { active: true, active_apn: row.apn, active_protocol: row.protocol, sampled_at: time() });
   for (let context in contexts) if (lc(context.active_apn) == lc(preferred)) return context;
   if (length(contexts) == 1) return contexts[0];
   return { active: false, sampled_at: time() };
@@ -43,7 +37,7 @@ let refresh = directory + '/apn-refresh';
 try {
   let settings = apnSettings();
   if (ARGV[0] == '--refresh') {
-    let lock = directory + '/lock';
+    let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
     let acquired = mkdir(lock, 0700);
     if (!acquired) {
       let owner = +text(lock + '/pid'), info = stat(lock);
@@ -52,8 +46,8 @@ try {
     if (acquired) {
       writefile(lock + '/pid', '' + pid);
       try {
-        let raw = bounded('sms_tool -d ' + port + ' at ' + apnQuote('AT+CGDCONT?;+CGACT?'), 5);
-        if (index(raw, '+CGACT:') >= 0) save(directory + '/apn-active.json', { device: port, ...apnActive(raw) });
+        let raw = bounded('sms_tool -d ' + port + ' at ' + apnQuote(profileBatch(['contexts','contextsActive'])), 5);
+        if (length(profileParse('contextsActive', raw))) save(directory + '/apn-active.json', { device: port, ...apnActive(raw) });
       } catch(e) {}
       unlink(lock + '/pid'); rmdir(lock);
     }

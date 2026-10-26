@@ -25,7 +25,7 @@ export default function Operators() {
   const consume = useCallback((result: OperatorResult, currentOnly = false) => {
     if (!mounted.current) return
     if (result.state) setState(result.state)
-    if (result.data && searched.current) setNetworks(parseOperators(result.data.raw))
+    if (result.data && searched.current) setNetworks(parseOperators(result.data.raw, result.data.records))
     setBusy(result.busy === true)
     if (result.message && (!currentOnly || result.status === 'error')) setNotice({ severity: result.busy || result.status === 'deferred' ? 'info' : result.status === 'error' ? 'error' : 'success', text: result.message })
   }, [])

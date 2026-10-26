@@ -9,6 +9,7 @@ export interface FieldRule {
   max?: number
   optional?: boolean
   unknown?: string[]
+  pattern?: string
 }
 export interface ReplyRule {
   regex: string
@@ -16,6 +17,8 @@ export interface ReplyRule {
   fields: Record<string, FieldRule>
   constants?: Record<string, Scalar>
   minimumFields?: number
+  segments?: string
+  repeat?: { start: number; stride: number; countIndex: number; maximum: number }
 }
 export interface CommandDefinition {
   command: string
@@ -32,6 +35,7 @@ export interface CommandDefinition {
   example?: string
   reference: string
   note?: string
+  output?: string
 }
 export interface ModemAdapter {
   schemaVersion: 1

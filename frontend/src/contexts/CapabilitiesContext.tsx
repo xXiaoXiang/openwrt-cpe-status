@@ -1,8 +1,9 @@
+import type { ModemProfile } from '../../../shared/modem-profile.ts'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Alert, Box } from '@mui/material'
 import { backendFetch } from '@/api/transport'
 
-interface Capabilities { id: string; demo: boolean; status_only?: boolean; writes_enabled: boolean; lpac_enabled: boolean; data_control: boolean; airplane_control?: boolean; roaming_policy: boolean; roaming_scope?: string; ims: boolean }
+interface Capabilities { modem_profile?: ModemProfile; id: string; demo: boolean; status_only?: boolean; writes_enabled: boolean; lpac_enabled: boolean; data_control: boolean; airplane_control?: boolean; roaming_policy: boolean; roaming_scope?: string; ims: boolean }
 const Context = createContext<Capabilities | null>(null)
 export const useCapabilities = () => useContext(Context)
 export function CapabilitiesProvider({ children }: { children: ReactNode }) {

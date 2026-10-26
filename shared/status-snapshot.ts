@@ -1,4 +1,4 @@
-import { rm500q } from '../adapters/quectel-rm500q-gl-r11.ts'
+import type { ModemProfile } from './modem-profile.ts'
 import { parseReply } from '../backend/parser.ts'
 import { normalizeCells } from '../backend/cells.ts'
 import type { Scalar, ApiResponse } from './adapter.ts'
@@ -15,17 +15,18 @@ export interface RouterHost extends HostNetwork {
 }
 export interface StatusSnapshot {
   error?: string; retry_after_ms?: number; source: string; device: string; stale?: boolean
+  profile_key?: string; adapter?: ModemProfile; sim_identity?: { iccid: string; imsi: string };
   raw: Record<string, string>; sampled: Record<string, number>; warnings?: Record<string, string>; host: RouterHost
 }
 const registration = (value: Scalar | undefined) => ({ 0: 'unregistered', 1: 'registered', 2: 'searching', 3: 'denied', 4: 'unknown', 5: 'roaming', 8: 'emergency' }[Number(value)] ?? 'unknown')
 export function snapshotRoutes(snapshot: StatusSnapshot): Record<string, ApiResponse> {
-  const parsed = (name: string, group: string) => { try { return parseReply(rm500q.commands[name], snapshot.raw[group] ?? '') } catch { return [] } }
+  const parsed = (name: string, group: string) => { try { return parseReply(snapshot.adapter!.commands[name], snapshot.raw[group] ?? '') } catch { return [] } }
   const row = (name: string, group: string) => parsed(name, group)[0] ?? {}
   const ok = (data: unknown): ApiResponse => ({ status: 'ok', message: 'Success', data })
   const unsupported: ApiResponse = { status: 'unsupported', message: '此状态版仅采集信息；该功能未启用' }
   const radio = row('radio', snapshot.raw.radio ? 'radio' : 'status'), simPin = row('simPin', 'status'), operator = row('operator', 'status'), provider = row('provider', 'status')
   const reg = row('registration', 'status'), reg5 = row('registration5g', 'status'), signal = row('signal', 'status')
-  const offline = radio.functionality === 4 || radio.functionality === 0
+  const offline = snapshot.adapter?.radioStates.off.includes(Number(radio.functionality)) ?? false
   const serving = parsed('serving', 'cells'), cellInfo = offline || !snapshot.sampled.cells
     ? { serving_cell: null, cells: [], technology: undefined }
     : normalizeCells(serving, parsed('neighbors', 'cells'), parsed('carriers', 'cells'))
@@ -63,8 +64,8 @@ export function snapshotRoutes(snapshot: StatusSnapshot): Record<string, ApiResp
     '/api/network-mode': snapshot.sampled.mode && row('mode', 'mode').mode ? ok({ mode: row('mode', 'mode').mode }) : { status: 'deferred', message: '等待网络模式快照', retry_after_ms: 2000 },
     '/api/airplane-mode': ok({ enabled: radio.functionality === 4, powered: true, online: radio.functionality === 1 }),
     '/api/roaming': ok({ is_roaming: network.registration_status === 'roaming', ...roamingPreference(row('roamingPreference', 'roaming').roam_pref) }),
-    '/api/sim': ok({ present: simPin.pin_required !== undefined && !/SIM not inserted|\+CME ERROR: *10\b/i.test(snapshot.raw.status ?? ''), ...simPin,
-      ...row('iccid', 'sim'), ...row('imsi', 'sim'), ...row('smsCenter', 'sim'), phone_numbers: parsed('phone', 'sim').map(value => value.number).filter(Boolean), preferred_languages: [], mcc: '', mnc: '' }),
+    '/api/sim': ok({ present: simPin.pin_required !== undefined && !new RegExp(snapshot.adapter?.simAbsentPattern ?? '(?!)').test(snapshot.raw.status ?? ''), ...simPin,
+      ...(snapshot.sim_identity ?? {}), ...row('iccid', 'sim'), ...row('imsi', 'sim'), ...row('smsCenter', 'sim'), phone_numbers: parsed('phone', 'sim').map(value => value.number).filter(Boolean), preferred_languages: [], mcc: '', mnc: '' }),
     '/api/data': ok({ active: net.up === true, pending: net.pending === true }), '/api/stats': ok(stats), '/api/connectivity': unsupported,
     '/api/ims/status': unsupported, '/api/qos': unsupported,
   }
@@ -73,7 +74,7 @@ export function snapshotRoutes(snapshot: StatusSnapshot): Record<string, ApiResp
     if (!snapshot.sampled.status || (path === '/api/device' && !snapshot.sampled.identity)) routes[path] = { status: 'deferred', message: '等待 Modem 快照', retry_after_ms: 10000 }
   }
   if (!offline && !snapshot.sampled.cells) routes['/api/cells'] = { status: 'deferred', message: '等待小区快照', retry_after_ms: 10000 }
-  if (simPin.pin_required === undefined && !/SIM not inserted|\+CME ERROR: *10\b/i.test(snapshot.raw.status ?? '')) routes['/api/sim'] = { status: 'deferred', message: '等待 SIM 状态', retry_after_ms: 10000 }
+  if (simPin.pin_required === undefined && !new RegExp(snapshot.adapter?.simAbsentPattern ?? '(?!)').test(snapshot.raw.status ?? '')) routes['/api/sim'] = { status: 'deferred', message: '等待 SIM 状态', retry_after_ms: 10000 }
   if (radio.functionality === undefined) routes['/api/airplane-mode'] = { status: 'deferred', message: '等待射频状态', retry_after_ms: 10000 }
   return routes
 }

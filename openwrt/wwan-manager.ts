@@ -8,7 +8,7 @@ function report(status, message, extra) { save(directory + '/wwan-manager.json',
 function net(action) { bounded(action + ' wwan', 5); }
 function invalidate(simChanged) {
   let snapshot = readJSON(directory + '/snapshot.json');
-  if (snapshot) { snapshot.sampled = {}; delete snapshot.attempted; if (simChanged) { snapshot.raw.sim = ''; snapshot.raw.status = ''; snapshot.raw.cells = ''; } save(directory + '/snapshot.json', snapshot); }
+  if (snapshot) { snapshot.sampled = {}; delete snapshot.attempted; if (simChanged) { snapshot.raw.sim = ''; delete snapshot.sim_identity; snapshot.raw.status = ''; snapshot.raw.cells = ''; } save(directory + '/snapshot.json', snapshot); }
   for (let name in ['bands.json', 'cell-locks.json', 'operators.json']) unlink(directory + '/' + name);
 }
 function prepare() {
@@ -25,8 +25,7 @@ function prepare() {
 }
 function at(cmd) { return bounded('sms_tool -d ' + port + ' at ' + quote(cmd) + ' 2>/dev/null', 5); }
 function binary(cmd) {
-  let raw = at(cmd), value = match(raw, /\+CRSM:\s*144,\s*0,\s*"([0-9A-Fa-f]+)"/);
-  return value ? uc(value[1]) : '';
+  let raw = at(profileCommand(cmd)); return uc(profileRow(cmd, raw).data || '');
 }
 function choose(entries, sim, current) {
   let valid = [], lengths = {}, specific = [], generic = [];
@@ -47,17 +46,26 @@ function choose(entries, sim, current) {
   for (let row in valid) if (row.apn == current) return row;
   return valid[0];
 }
+function localApns() {
+  let value = readJSON('/etc/cpe-status/apns.local.json');
+  if (!value || type(value.apns) != 'array') die('本地 APN 扩展配置无效');
+  for (let row in value.apns) {
+    if (!match(row.mcc || '', /^[0-9]{3}$/) || !match(row.mnc || '', /^[0-9]{2,3}$/) || !match(row.apn || '', /^[A-Za-z0-9][A-Za-z0-9.-]{0,99}$/)) die('本地 APN 扩展条目格式无效');
+  }
+  return value.apns;
+}
 function tick() {
+  refreshProfile();
   let state = readJSON(directory + '/sim-identity.json');
-  if (!stat(port)) {
+  if (!stat(port) || !profile) {
     if (!state || state.present !== false) { net('ifdown'); save(directory + '/sim-identity.json', { ...(state || {}), present: false }); invalidate(true); }
-    report('waiting', 'Modem 不存在，wwan 已停用'); return;
+    report('waiting', profileError || 'Modem 不存在，wwan 已停用'); return;
   }
   if (state?.checked && time() - state.checked < 30) return;
   let netifd = null;
   try { netifd = json(bounded('ubus -S call network.interface.wwan status 2>/dev/null', 3)); } catch(e) {}
   if (!netifd || index(['qmi', 'mbim'], netifd.proto) < 0) { report('waiting', '等待 netifd 的 wwan 接口就绪'); return; }
-  let lock = directory + '/lock';
+  let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
   if (!mkdir(lock, 0700)) {
     let owner = +text(lock + '/pid');
     if (owner && !stat('/proc/' + owner)) { unlink(lock + '/pid'); rmdir(lock); }
@@ -65,27 +73,29 @@ function tick() {
   }
   writefile(lock + '/pid', '' + pid);
   try {
-    let raw = at('AT+CPIN?;+QCCID'), iccid = match(raw, /\+QCCID:\s*([0-9]{18,22})/), imsi = state?.present && state.iccid == iccid?.[1] ? state.imsi : '';
+    let raw = at(profileBatch(['simPin','iccid'])), iccid = null, pin = null;
+    try { iccid = profileRow('iccid', raw).iccid; pin = profileRow('simPin', raw).pin_required; } catch(e) {}
+    let imsi = state?.present && state.iccid == iccid ? state.imsi : '';
     let imsiChecked = state?.imsi_checked || 0;
-    if (iccid && index(raw, 'READY') >= 0 && (!imsi || time() - imsiChecked >= 300)) {
-      let found = match(at('AT+CIMI'), /(^|\n)\s*([0-9]{14,16})\s*(\r?\n|$)/); imsi = found ? found[2] : '';
+    if (iccid && pin == profile.simReadyValue && (!imsi || time() - imsiChecked >= 300)) {
+      imsi = profileRow('imsi', at(profileCommand('imsi'))).imsi || '';
       if (imsi) imsiChecked = time();
     }
-    if (match(raw, /SIM not inserted|\+CME ERROR: *10([^0-9]|$)/i)) {
+    if (profileAbsent(raw)) {
       if (state?.present !== false) { net('ifdown'); invalidate(true); }
       save(directory + '/sim-identity.json', { ...(state || {}), present: false, checked: time() }); report('waiting', 'SIM 未插入，wwan 已停用');
-    } else if (!iccid || !imsi || index(raw, 'READY') < 0) {
+    } else if (!iccid || !imsi || pin != profile.simReadyValue) {
       if (!state?.present) net('ifdown');
       report('waiting', '等待 SIM 解锁及归属信息');
     } else {
-      let sim = { present: true, iccid: iccid[1], imsi, checked: time(), imsi_checked: imsiChecked }, changed = state?.iccid != sim.iccid || state?.imsi != sim.imsi || state?.present !== true;
-      if (!changed && state.configured) { state.checked = time(); state.imsi_checked = imsiChecked; save(directory + '/sim-identity.json', state); }
+      let sim = { present: true, iccid, imsi, checked: time(), imsi_checked: imsiChecked }, changed = state?.iccid != sim.iccid || state?.imsi != sim.imsi || state?.present !== true;
+      if (!changed && state.configured && state.apnStamp == text('/etc/cpe-status/apns.local.json')) { state.checked = time(); state.imsi_checked = imsiChecked; save(directory + '/sim-identity.json', state); }
       else {
         // EF_AD byte 4 supplies the home MNC length; never use serving PLMN.
-        let ad = binary('AT+CRSM=176,28589,0,0,4'), digit = length(ad) >= 8 ? substr(ad, 7, 1) : '';
+        let ad = binary('simAdministrative'), digit = length(ad) >= 8 ? substr(ad, 7, 1) : '';
         sim.mncLength = digit == '2' ? 2 : digit == '3' ? 3 : null;
-        sim.gid = binary('AT+CRSM=176,28478,0,0,1');
-        let spn = binary('AT+CRSM=176,28486,0,0,17'); sim.spn = '';
+        sim.gid = binary('simGroup');
+        let spn = binary('simProvider'); sim.spn = '';
         // GSM default alphabet's printable ASCII subset is sufficient for most
         // APN SPN filters; unsupported encodings do not falsely match an MVNO.
         if (length(spn) >= 4 && substr(spn, 2, 2) != '80' && substr(spn, 2, 2) != '81' && substr(spn, 2, 2) != '82') {
@@ -93,12 +103,13 @@ function tick() {
         }
         let override = (readJSON(apnOverridePath) || {})[sim.iccid];
         if (override) override = apnValidate(override);
-        let apn = override ? { apn: override.apn, carrier: '用户配置', mcc: substr(sim.imsi,0,3), mnc: substr(sim.imsi,3,sim.mncLength || 2) } : choose(readJSON('/usr/share/cpe-status/apns.json') || [], sim, uci('apn'));
+        let apn = override ? { apn: override.apn, carrier: '用户配置', mcc: substr(sim.imsi,0,3), mnc: substr(sim.imsi,3,sim.mncLength || 2) } : (choose(localApns(), sim, '') || choose(readJSON('/usr/share/cpe-status/apns.json') || [], sim, uci('apn')));
         if (!apn) {
           net('ifdown');
           save(directory + '/sim-identity.json', sim); invalidate(true);
           report('unmatched', '无法唯一匹配 SIM 归属 APN，wwan 保持关闭', { mcc: substr(sim.imsi, 0, 3) });
         } else {
+          requireProfile();
           let adopt = apn.apn == uci('apn') && (!state?.iccid || state.iccid == sim.iccid);
           let username = adopt ? uci('username') : apn.user || '', password = adopt ? uci('password') : apn.password || '';
           let pdptype = adopt && index(['ip', 'ipv4', 'ipv6', 'ipv4v6'], uci('pdptype')) >= 0 ? uci('pdptype') : apn.protocol == 'IPV6' ? 'ipv6' : apn.protocol == 'IPV4V6' ? 'ipv4v6' : 'ipv4';
@@ -112,12 +123,12 @@ function tick() {
             if (index(saved, 'CPE_APN_SAVED') < 0) die('APN 配置保存失败，wwan 保持关闭');
           }
           for (let key, value in values) if (uci(key) != value) die('APN 配置回读不一致，wwan 保持关闭');
-          let desired = readJSON(directory + '/user-data.json'), radio = at('AT+CFUN?');
-          if (desired?.enabled !== false && match(radio, /\+CFUN:\s*1([^0-9]|$)/) && (restart || (!netifd.up && !netifd.pending))) {
+          let desired = readJSON(directory + '/user-data.json'), radio = profileRow('radio', at(profileCommand('radio')));
+          if (desired?.enabled !== false && radio.functionality == profile.radioStates.online && (restart || (!netifd.up && !netifd.pending))) {
             let submitted = bounded('ifup wwan && echo CPE_IFUP_SUBMITTED', 5);
             if (index(submitted, 'CPE_IFUP_SUBMITTED') < 0) die('APN 已保存，等待 wwan 启动成功后重试');
           }
-          sim.configured = true; sim.apn = apn.apn; save(directory + '/sim-identity.json', sim); invalidate(true);
+          sim.configured = true; sim.apn = apn.apn; sim.apnStamp = text('/etc/cpe-status/apns.local.json'); save(directory + '/sim-identity.json', sim); invalidate(true);
           report('ready', 'SIM 归属 APN 已配置', { carrier: apn.carrier, apn: apn.apn, mcc: apn.mcc, mnc: apn.mnc });
         }
       }

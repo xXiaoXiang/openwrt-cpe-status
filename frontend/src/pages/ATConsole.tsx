@@ -1,3 +1,4 @@
+import { parseReply, renderCommand } from '../../../backend/parser.ts'
 /*
  * @Author: 1orz cloudorzi@gmail.com
  * @Date: 2025-12-03 13:58:02
@@ -54,6 +55,9 @@ const QUICK_COMMANDS = [
 
 export default function ATConsolePage() {
   const capability = useCapabilities()
+  const profile = capability?.modem_profile
+  const imeiDefinition = profile?.commands[profile.console.imeiRead]
+  const quickCommands = profile ? profile.console.shortcuts.flatMap(item => profile.commands[item.operation] ? [{ label: item.label, cmd: renderCommand(profile.commands[item.operation]), desc: item.desc }] : []) : capability?.status_only ? [] : QUICK_COMMANDS
   const run = useSingleFlight()
   const [command, setCommand] = useState('')
   const [history, setHistory] = useState<CommandHistory[]>([])
@@ -74,9 +78,11 @@ export default function ATConsolePage() {
   const fetchCurrentImei = useCallback(() => run('imei', async () => {
     setImeiLoading(true)
     try {
-      const response = await api.sendAtCommand('AT+CGSN')
+      if (capability?.status_only && !imeiDefinition) return
+      const response = await api.sendAtCommand(imeiDefinition ? renderCommand(imeiDefinition) : 'AT+CGSN')
       // 从响应中提取 IMEI（格式通常是 +SPIMEI: "123456789012345"）
-      const match = response.match(/["']?(\d{15})["']?/)
+      const value = imeiDefinition ? parseReply(imeiDefinition, response)[0]?.imei : response.match(/["']?(\d{15})["']?/)?.[1]
+      const match = value ? [String(value), String(value)] : null
       if (match) {
         setCurrentImei(match[1])
       }
@@ -85,7 +91,7 @@ export default function ATConsolePage() {
     } finally {
       setImeiLoading(false)
     }
-  }), [run])
+  }), [run, capability?.status_only, imeiDefinition])
 
   useEffect(() => {
     void fetchCurrentImei()
@@ -159,7 +165,7 @@ export default function ATConsolePage() {
     }
     
     if (!window.confirm('确认写入该 IMEI？')) return
-    const cmd = `AT+EGMR=1,7,"${currentImei.trim()}"`
+    const cmd = profile ? renderCommand(profile.commands[profile.console.imeiWrite], { imei: currentImei.trim() }) : `AT+EGMR=1,7,"${currentImei.trim()}"`
     await sendCommand(cmd)
     
     // 等待一下再重新获取，确认修改成功
@@ -324,7 +330,7 @@ export default function ATConsolePage() {
       <Paper sx={{ p: 1.5 }}>
         {/* 快捷指令 */}
         <Box display="flex" flexWrap="wrap" gap={0.5} mb={1.5}>
-          {QUICK_COMMANDS.map((item, idx) => (
+          {quickCommands.map((item, idx) => (
             <Tooltip key={idx} title={`${item.cmd} - ${item.desc}`} placement="top">
               <Chip
                 label={item.label}

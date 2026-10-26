@@ -1,5 +1,5 @@
 export const packageManifest = {
-  name: 'openwrt-modem-monitor', version: '0.3.0', private: true, type: 'module', license: 'GPL-3.0-only',
+  name: 'openwrt-modem-monitor', version: '1.0.0', private: true, type: 'module', license: 'GPL-3.0-only',
   engines: { node: '>=24' },
   scripts: { check: 'tsc --noEmit', test: 'node --experimental-transform-types --test tests/*.test.ts', build: 'node --experimental-transform-types tools/build.ts', dev: 'vite --config frontend/vite.config.ts', demo: 'node build/daemon.mjs --demo' },
   dependencies: { '@emotion/react': '^11.14.0', '@emotion/styled': '^11.14.1', '@mui/icons-material': '^7.3.5', '@mui/material': '^7.3.5', '@mui/x-charts': '^8.18.0', '@mui/x-data-grid': '^8.18.0', '@tanstack/react-query': '^5.90.12', react: '^19.2.0', 'react-dom': '^19.2.0', 'react-router-dom': '^7.9.6', swr: '^2.3.6' },
