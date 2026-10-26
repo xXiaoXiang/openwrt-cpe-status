@@ -1,0 +1,39 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": [
+      "ES2022",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "types": [
+      "node",
+      "vite/client"
+    ],
+    "baseUrl": ".",
+    "paths": {
+      "@/*": [
+        "frontend/src/*"
+      ]
+    }
+  },
+  "include": [
+    "backend",
+    "frontend/src",
+    "frontend/vite.config.ts",
+    "shared",
+    "adapters",
+    "openwrt",
+    "tests",
+    "docs",
+    "tools",
+    "project.ts"
+  ]
+}

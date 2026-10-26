@@ -1,0 +1,34 @@
+import { execFileSync } from 'node:child_process'
+import { readFile, writeFile } from 'node:fs/promises'
+import { createHash } from 'node:crypto'
+import { resolve, basename, sep } from 'node:path'
+
+const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || 'luci-app-cpe-status-0.3.0-r0.apk')
+if (!apk.startsWith(root + sep) || !/^luci-app-cpe-status-[\d.]+-r\d+\.apk$/.test(basename(apk))) throw new Error('Invalid generated APK path')
+const sshOptions = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts']
+const ssh = (script: string) => execFileSync('ssh', [...sshOptions, 'root@192.168.6.248', 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })
+const untouched = () => ssh("uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum").trim()
+const before = untouched(), sha256 = createHash('sha256').update(await readFile(apk)).digest('hex'), name = basename(apk)
+execFileSync('scp', ['-O', ...sshOptions, apk, `root@192.168.6.248:/root/${name}`], { stdio: 'inherit', windowsHide: true })
+const verified = ssh(`sha256sum /root/${name}`).trim().split(/\s+/)[0]
+if (verified !== sha256) throw new Error('Router APK checksum mismatch')
+console.log(ssh(`apk add --network=no --allow-untrusted /root/${name}\napk list --installed luci-app-cpe-status`))
+const after = untouched()
+if (before !== after) throw new Error('Unexpected configuration change outside network.wwan')
+const summary = ssh(`
+/etc/init.d/cpe-status enabled && echo STARTUP_ENABLED
+for attempt in 1 2 3 4 5 6; do
+  if test -f /tmp/cpe-status/wwan-manager.json && grep -q '"status": "ready"' /tmp/cpe-status/wwan-manager.json; then break; fi
+  sleep 2
+done
+cat /tmp/cpe-status/wwan-manager.json 2>/dev/null || true
+echo
+ubus -S call service list '{"name":"cpe-status"}'
+uci -q get network.wwan.auto
+uci -q get network.wwan.apn
+uci -q get network.wwan.modes
+ubus -S call network.interface.wwan status
+`)
+await writeFile('build/router-audit/installed-services.json', JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: before === after, summary }, null, 2))
+console.log(summary)
+console.log(JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: true }))

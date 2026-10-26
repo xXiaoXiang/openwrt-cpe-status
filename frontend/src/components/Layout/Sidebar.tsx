@@ -1,0 +1,136 @@
+/*
+ * @Author: 1orz cloudorzi@gmail.com
+ * @Date: 2025-12-10 09:19:05
+ * @LastEditors: 1orz cloudorzi@gmail.com
+ * @LastEditTime: 2026-04-18 00:00:00
+ * @FilePath: /udx710-backend/frontend/src/components/Layout/Sidebar.tsx
+ * @Description:
+ *
+ * Copyright (c) 2025 by 1orz, All Rights Reserved.
+ */
+import { useNavigate, useLocation } from 'react-router-dom'
+import {
+  Drawer,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Toolbar,
+  Divider,
+  Box,
+  Typography,
+  Link,
+} from '@mui/material'
+import { GitHub as GitHubIcon } from '@mui/icons-material'
+import { navigationItems } from './navigation'
+import SidebarControls from './SidebarControls'
+
+interface SidebarProps {
+  drawerWidth: number
+  mobileOpen: boolean
+  desktopOpen: boolean
+  onClose: () => void
+  isMobile: boolean
+}
+
+export default function Sidebar({ drawerWidth, mobileOpen, desktopOpen, onClose, isMobile }: SidebarProps) {
+  const navigate = useNavigate()
+  const location = useLocation()
+
+  const handleNavigation = (path: string): void => {
+    void navigate(path)
+    if (isMobile) {
+      onClose()
+    }
+  }
+
+  const drawer = (
+    <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Toolbar sx={{ px: 2, gap: 1, borderRadius: 0 }}>
+        <Typography variant="h6" noWrap component="div" fontWeight={600} sx={{ flex: 1, fontSize: '1.125rem' }}>
+          CPE Status
+        </Typography>
+        {(isMobile ? mobileOpen : desktopOpen) && <SidebarControls />}
+      </Toolbar>
+      <Divider />
+      <List sx={{ flexGrow: 1 }}>
+        {navigationItems.map((item) => {
+          const IconComponent = item.icon
+          return (
+            <ListItem key={item.path} disablePadding>
+              <ListItemButton
+                selected={location.pathname === item.path}
+                onClick={() => handleNavigation(item.path)}
+              >
+                <ListItemIcon>
+                  <IconComponent />
+                </ListItemIcon>
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            </ListItem>
+          )
+        })}
+      </List>
+      <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
+        <Link
+          href="https://github.com/xXiaoXiang/project-cpe"
+          target="_blank"
+          rel="noopener noreferrer"
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 0.5,
+            color: 'text.secondary',
+            textDecoration: 'none',
+            fontSize: '0.75rem',
+            '&:hover': {
+              color: 'primary.main',
+            },
+          }}
+        >
+          <GitHubIcon sx={{ fontSize: 16 }} />
+          <Typography variant="caption" color="inherit">
+            xXiaoXiang/project-cpe
+          </Typography>
+        </Link>
+        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+          v{__APP_VERSION__} ({__GIT_BRANCH__}/{__GIT_COMMIT__})
+        </Typography>
+        <Typography variant="caption" color="text.disabled" sx={{ display: 'block', mt: 0.5 }}>
+          Copyright 2025 xXiaoXiang
+        </Typography>
+      </Box>
+    </Box>
+  )
+
+  return (
+    <Box
+      component="nav"
+      sx={{
+        width: { xs: 0, sm: desktopOpen ? drawerWidth : 0 },
+        flexShrink: { sm: 0 },
+        transition: 'width 0.3s',
+      }}
+    >
+      <Drawer
+        variant={isMobile ? 'temporary' : 'persistent'}
+        open={isMobile ? mobileOpen : desktopOpen}
+        onClose={onClose}
+        ModalProps={{
+          keepMounted: true,
+        }}
+        sx={{
+          '& .MuiDrawer-paper': {
+            boxSizing: 'border-box',
+            width: drawerWidth,
+            borderRadius: 0,
+            transition: 'transform 0.3s',
+          },
+        }}
+      >
+        {drawer}
+      </Drawer>
+    </Box>
+  )
+}

@@ -1,0 +1,232 @@
+/*
+ * @Author: 1orz cloudorzi@gmail.com
+ * @Date: 2025-12-10 10:16:39
+ * @LastEditors: 1orz cloudorzi@gmail.com
+ * @LastEditTime: 2025-12-13 12:44:31
+ * @FilePath: /udx710-backend/frontend/src/pages/Dashboard/components/StatusOverview.tsx
+ * @Description:
+ *
+ * Copyright (c) 2025 by 1orz, All Rights Reserved.
+ */
+import type { ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { alpha, Box, Chip, Paper, Tooltip, Typography } from '@mui/material'
+import { useFitToWidth } from '@/hooks/useFitToWidth'
+import { useScrollDock } from '@/hooks/useScrollDock'
+import { useDashboardHeader } from '@/contexts/DashboardHeaderContext'
+import {
+  SignalCellularAlt,
+  WifiTethering,
+  Router,
+  PowerSettingsNew,
+  FlightTakeoff,
+  TravelExplore,
+} from '@mui/icons-material'
+import { formatCarrierName, getCarrierColor, getCarrierInfo, getCarrierLogo } from '@/utils/carriers'
+import { getSignalColor } from '../utils'
+import type { DeviceInfo, NetworkInfo, CellsResponse, AirplaneModeResponse, ImsStatusResponse, RoamingResponse } from '@/api/types'
+
+interface StatusOverviewProps {
+  presentation?: 'header' | 'dashboard' | 'bar'
+  deviceInfo: DeviceInfo | null
+  networkInfo: NetworkInfo | null
+  cellsInfo: CellsResponse | null
+  airplaneMode: AirplaneModeResponse | null
+  imsStatus: ImsStatusResponse | null
+  roaming?: RoamingResponse | null
+  waitingMessage?: string | null
+}
+
+function HeaderStatus({ children, alignment = 'window' }: { children: ReactNode; alignment?: 'window' | 'start' }) {
+  const { containerRef, contentRef } = useFitToWidth(alignment)
+  return (
+    <Box ref={containerRef} data-network-overview sx={{ position: 'relative', flex: '1 1 0', minWidth: 0, height: 40, overflow: 'hidden' }}>
+      <Box ref={contentRef} sx={{ position: 'absolute', left: 0, top: 0, width: 'max-content', transformOrigin: '0 0' }}>
+        {children}
+      </Box>
+    </Box>
+  )
+}
+
+function BarStatus({ children }: { children: ReactNode }) {
+  return <HeaderStatus alignment="start">{children}</HeaderStatus>
+}
+
+function DashboardStatus({ children }: { children: ReactNode }) {
+  const { target } = useDashboardHeader()
+  const { homeRef, host } = useScrollDock(target)
+  return (
+    <Paper data-network-overview elevation={0} sx={{
+      p: { xs: 1, sm: 2 }, mb: 2, borderRadius: 2,
+      background: (theme) => `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.08)} 0%, ${alpha(theme.palette.secondary.main, 0.03)} 100%)`,
+      border: (theme) => `1px solid ${alpha(theme.palette.primary.main, 0.1)}`,
+    }}>
+      <Box ref={homeRef} data-dashboard-status-home sx={{ position: 'relative', minWidth: 0 }} />
+      {host && createPortal(children, host)}
+    </Paper>
+  )
+}
+
+export function StatusOverview({
+  presentation = 'header',
+  deviceInfo,
+  networkInfo,
+  cellsInfo,
+  airplaneMode,
+  imsStatus,
+  roaming,
+  waitingMessage,
+}: StatusOverviewProps) {
+  const StatusContainer = presentation === 'dashboard' ? DashboardStatus : presentation === 'bar' ? BarStatus : HeaderStatus
+  const mode = airplaneMode ?? deviceInfo
+  const radioOnline = mode?.powered === true && mode.online === true
+  const flightMode = airplaneMode?.enabled === true && airplaneMode.powered
+  const registered = radioOnline && ['registered', 'roaming'].includes(networkInfo?.registration_status ?? '')
+  const searching = radioOnline && ['searching', 'initializing'].includes(networkInfo?.registration_status ?? '')
+
+  const networkTech = (() => {
+    if (!radioOnline) return 'N/A'
+    const technology = networkInfo?.technology && networkInfo.technology.toLowerCase() !== 'unknown'
+      ? networkInfo.technology : cellsInfo?.serving_cell?.tech
+    const reported = technology?.trim().toUpperCase()
+    // EN-DC is the LTE/NR dual connectivity mode reported by oFono itself.
+    if (reported === 'ENDC' || reported === 'EN-DC') return '5G NSA'
+    if (reported) return reported
+    return 'N/A'
+  })()
+
+  const signalStrength = registered ? networkInfo?.signal_strength : undefined
+  const signalColor = signalStrength === undefined ? 'text.disabled' : `${getSignalColor(signalStrength)}.main`
+  const registrationLabel = !networkInfo
+    ? '加载中'
+    : networkInfo.registration_status === 'registered'
+      ? '已注册'
+      : networkInfo.registration_status === 'roaming'
+        ? '漫游'
+        : ({ searching: '正在搜网', initializing: '正在初始化', denied: '注册被拒绝', unregistered: '未注册', unknown: '未知' }[networkInfo.registration_status] || '未注册')
+  const registrationColor = !networkInfo
+    ? 'default'
+    : networkInfo.registration_status === 'registered'
+      ? 'success'
+      : networkInfo.registration_status === 'roaming'
+        ? 'warning'
+        : 'default'
+  const modemLabel = !mode ? '加载中' : flightMode ? '飞行模式' : !mode.powered ? 'Modem 未上电' : radioOnline ? '已上线' : '已离线'
+  const modemColor = !mode ? 'default' : flightMode ? 'warning' : radioOnline ? 'success' : 'default'
+  const carrierLabel = registered && networkInfo ? formatCarrierName(networkInfo.mcc, networkInfo.mnc)
+    : !mode ? '载入中' : flightMode ? '射频已关闭' : !radioOnline ? '无网络连接' : registrationLabel
+  const carrierLogo = registered && networkInfo ? getCarrierLogo(networkInfo.mcc, networkInfo.mnc) : null
+  const carrierLogoBadge = registered && networkInfo ? getCarrierInfo(networkInfo.mcc, networkInfo.mnc)?.logoBadge : undefined
+
+  return (
+    <StatusContainer>
+      <Box data-network-status-items display="flex" flexWrap="nowrap" alignItems="center"
+        sx={{
+          width: 'max-content', whiteSpace: 'nowrap',
+          gap: { xs: 0.375, sm: 1 },
+          '& > *': { flexShrink: 0 },
+          '& .MuiChip-root': { height: 24, fontSize: { xs: '0.6875rem', sm: '0.8125rem' } },
+          '& .MuiChip-label': { px: { xs: 0.625, sm: 1 } },
+          '& .MuiChip-icon': { fontSize: { xs: 16, sm: 18 }, ml: 0.5, mr: -0.25 },
+        }}>
+        <Box display="flex" alignItems="center" sx={{ gap: { xs: 0.5, sm: 1 } }}>
+          {carrierLogo ? (
+            <Box sx={{ position: 'relative', display: 'inline-flex', pr: carrierLogoBadge ? 1 : 0 }}>
+              <Box component="img" src={carrierLogo} alt={carrierLabel} title={carrierLabel} sx={{ height: { xs: 24, sm: 32 }, width: 'auto', maxWidth: { xs: 92, sm: 160 }, objectFit: 'contain' }} />
+              {carrierLogoBadge && (
+                <Box
+                  component="span"
+                  aria-hidden="true"
+                  sx={{
+                    position: 'absolute', right: 0, bottom: -2,
+                    px: 0.4, borderRadius: 0.5, bgcolor: 'background.paper', color: 'text.primary',
+                    fontSize: 10, fontWeight: 800, lineHeight: 1.4,
+                    border: '1px solid', borderColor: 'divider',
+                  }}
+                >
+                  {carrierLogoBadge}
+                </Box>
+              )}
+            </Box>
+          ) : !searching && (
+            <Chip
+              label={carrierLabel}
+              color={registered && networkInfo ? getCarrierColor(networkInfo.mcc, networkInfo.mnc) : 'default'}
+              size="small"
+            />
+          )}
+          <Box display="flex" alignItems="center" gap={0.5}>
+            <SignalCellularAlt sx={{ fontSize: { xs: 20, sm: 24 }, color: signalColor }} />
+            <Typography variant="h6" fontWeight="bold" color={signalColor} sx={{ fontSize: { xs: '0.9375rem', sm: '1.25rem' } }}>
+              {signalStrength === undefined ? '--' : `${signalStrength}%`}
+            </Typography>
+          </Box>
+        </Box>
+
+        {(searching || networkTech !== 'N/A') && (
+          <Tooltip title={[networkTech === '5G NSA' ? 'oFono 报告 EN-DC：LTE 与 NR 双连接（5G NSA）' : '', searching ? registrationLabel : waitingMessage].filter(Boolean).join('；')}>
+            <Box
+              data-network-technology
+              data-searching={searching}
+              aria-label={searching ? `${networkTech === 'N/A' ? '-' : networkTech}，${registrationLabel}` : undefined}
+              sx={{ position: 'relative', display: 'inline-flex', p: { xs: '2px', sm: '3px' }, borderRadius: 999 }}
+            >
+              <Chip
+                icon={<WifiTethering />}
+                label={networkTech === 'N/A' ? '-' : networkTech}
+                color={networkTech === '5G' || networkTech === 'NR' || networkTech === '5G NSA' ? 'success' : 'primary'}
+                size="small"
+                sx={{ fontWeight: 'bold' }}
+              />
+              {searching && (
+                <Box
+                  component="svg"
+                  aria-hidden="true"
+                  sx={{
+                    position: 'absolute', inset: 0, width: '100%', height: '100%',
+                    pointerEvents: 'none', fill: 'none', color: 'primary.main',
+                    '& rect': {
+                      width: 'calc(100% - 2px)', height: 'calc(100% - 2px)',
+                      stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round',
+                      strokeDasharray: '28 72',
+                      animation: 'network-search-border 1.8s linear infinite',
+                    },
+                    '@keyframes network-search-border': {
+                      from: { strokeDashoffset: 0 }, to: { strokeDashoffset: -100 },
+                    },
+                    '@media (prefers-reduced-motion: reduce)': {
+                      '& rect': { animation: 'none' },
+                    },
+                  }}
+                >
+                  <rect x="1" y="1" rx="14" pathLength="100" />
+                </Box>
+              )}
+            </Box>
+          </Tooltip>
+        )}
+
+        {radioOnline && !searching && (
+          <Tooltip title="蜂窝网络注册状态：来自 oFono NetworkRegistration.Status；已注册不代表数据连接已激活。">
+            <Chip icon={<Router />} label={registrationLabel} color={registrationColor} variant="outlined" size="small" />
+          </Tooltip>
+        )}
+
+        {registered && roaming?.is_roaming && typeof roaming.roaming_allowed === 'boolean' && (
+          <Chip
+            icon={<TravelExplore />}
+            label={roaming.policy_scope === 'registration' ? roaming.roaming_allowed ? '网络漫游已开启' : '网络漫游已关闭' : roaming.roaming_allowed ? '数据漫游已开启' : '数据漫游已关闭'}
+            color={roaming.roaming_allowed ? 'info' : 'error'}
+            size="small"
+          />
+        )}
+
+        <Tooltip title="Modem 状态：来自 oFono Modem.Powered / Online；已上线表示射频已开启，不代表互联网可达。">
+          <Chip icon={flightMode ? <FlightTakeoff /> : <PowerSettingsNew />} label={modemLabel} color={modemColor} size="small" />
+        </Tooltip>
+
+        {registered && imsStatus?.registered && <Chip label="VoLTE" color="info" size="small" variant="outlined" />}
+      </Box>
+    </StatusContainer>
+  )
+}

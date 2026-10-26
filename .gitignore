@@ -1,0 +1,11 @@
+node_modules/
+build/
+dist/
+frontend/public/
+*.log
+.env
+.env.*
+*.apk
+*.ipk
+*.pem
+*.key
