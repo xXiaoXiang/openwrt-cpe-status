@@ -19,7 +19,7 @@ validateAdapter(rm500q)
 await writeFile('build/adapters/quectel-rm500q-gl-r11.json', JSON.stringify(rm500q, null, 2))
 await mkdir('frontend/public/provider', { recursive: true })
 for (const [name, contents] of Object.entries(providerAssets)) await writeFile(`frontend/public/provider/${name}`, contents)
-await writeFile('README.md', guide)
+await writeFile('DEV.md', guide)
 for (const [entry, outfile] of [['backend/main.ts', 'build/daemon.mjs'], ['openwrt/rpc-bridge.ts', 'build/rpc-bridge.mjs']]) await esbuild.build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node20', packages: 'external', sourcemap: true })
 await new Promise<void>((resolve, reject) => {
   const command = spawn(process.execPath, [resolvePath(dirname(require.resolve('vite/package.json')), 'bin/vite.js'), 'build', '--config', 'frontend/vite.config.ts'], { stdio: 'inherit', windowsHide: true })

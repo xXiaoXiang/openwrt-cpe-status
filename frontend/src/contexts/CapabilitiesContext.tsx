@@ -2,6 +2,7 @@ import type { ModemProfile } from '../../../shared/modem-profile.ts'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { Alert, Box } from '@mui/material'
 import { backendFetch } from '@/api/transport'
+import { modemProfiles } from '@/api/profileCache'
 
 interface Capabilities { modem_profile?: ModemProfile; id: string; demo: boolean; status_only?: boolean; writes_enabled: boolean; lpac_enabled: boolean; data_control: boolean; airplane_control?: boolean; roaming_policy: boolean; roaming_scope?: string; ims: boolean }
 const Context = createContext<Capabilities | null>(null)
@@ -11,12 +12,15 @@ export function CapabilitiesProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null)
   useEffect(() => {
     let cancelled = false
-    void backendFetch('/api/adaptation').then(response => response.json()).then((response: { status: string; data?: Capabilities; message: string }) => {
+    const load = () => { void backendFetch('/api/adaptation').then(response => response.json()).then((response: { status: string; data?: Capabilities; message: string }) => {
       if (cancelled) return
       if (response.status !== 'ok' || !response.data) throw new Error(response.message)
       setCapabilities(response.data)
-    }).catch(reason => { if (!cancelled) setError(String(reason)) })
-    return () => { cancelled = true }
+      setError(null)
+    }).catch(reason => { if (!cancelled) setError(String(reason)) }) }
+    load()
+    const unsubscribe = modemProfiles.subscribe(load)
+    return () => { cancelled = true; unsubscribe() }
   }, [])
   return <Context.Provider value={capabilities}>
     {error && <Alert severity="error">无法读取模块能力：{error}</Alert>}

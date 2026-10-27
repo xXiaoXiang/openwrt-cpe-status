@@ -1,7 +1,8 @@
 import { apnRuntime } from './apn-control.ts'
 import { statusRuntime } from './status-collector.ts'
+import { qosDialRuntime } from './qos.ts'
 
-export const wwanManager = statusRuntime + apnRuntime + String.raw`
+export const wwanManager = statusRuntime + apnRuntime + qosDialRuntime + String.raw`
 function quote(value) { return "'" + replace(value, /'/g, "'\\''") + "'"; }
 function uci(key) { return trim(bounded('uci -q get network.wwan.' + key, 3)); }
 function report(status, message, extra) { save(directory + '/wwan-manager.json', { status, message, ...(extra || {}), time: time() }); }
@@ -11,9 +12,13 @@ function invalidate(simChanged) {
   if (snapshot) { snapshot.sampled = {}; delete snapshot.attempted; if (simChanged) { snapshot.raw.sim = ''; delete snapshot.sim_identity; snapshot.raw.status = ''; snapshot.raw.cells = ''; } save(directory + '/snapshot.json', snapshot); }
   for (let name in ['bands.json', 'cell-locks.json', 'operators.json']) unlink(directory + '/' + name);
 }
+function autoApnSupported() {
+  return profileEnabled('autoApn') && profileHas('simPin') && profileHas('iccid') && profileHas('imsi') && profileHas('radio');
+}
 function prepare() {
   if (iface != 'wwan') die('自动 APN 仅允许管理 wwan');
   if (config.autoApn === false) return false;
+  if (profile && !autoApnSupported()) { report('unsupported', 'Not applicable'); return true; }
   if (index(['qmi', 'mbim'], uci('proto')) < 0) { report('waiting', '仅管理已有的 wwan QMI/MBIM 接口'); return false; }
   mkdir('/etc/cpe-status', 0700);
   if (!stat('/etc/cpe-status/wwan-original.json')) save('/etc/cpe-status/wwan-original.json', { auto: uci('auto'), apn: uci('apn'), pdptype: uci('pdptype'), auth: uci('auth'), username: uci('username'), password: uci('password') });
@@ -61,6 +66,7 @@ function tick() {
     if (!state || state.present !== false) { net('ifdown'); save(directory + '/sim-identity.json', { ...(state || {}), present: false }); invalidate(true); }
     report('waiting', profileError || 'Modem 不存在，wwan 已停用'); return;
   }
+  if (!autoApnSupported()) { report('unsupported', 'Not applicable'); return; }
   if (state?.checked && time() - state.checked < 30) return;
   let netifd = null;
   try { netifd = json(bounded('ubus -S call network.interface.wwan status 2>/dev/null', 3)); } catch(e) {}
@@ -125,6 +131,7 @@ function tick() {
           for (let key, value in values) if (uci(key) != value) die('APN 配置回读不一致，wwan 保持关闭');
           let desired = readJSON(directory + '/user-data.json'), radio = profileRow('radio', at(profileCommand('radio')));
           if (desired?.enabled !== false && radio.functionality == profile.radioStates.online && (restart || (!netifd.up && !netifd.pending))) {
+            prepareQosDial();
             let submitted = bounded('ifup wwan && echo CPE_IFUP_SUBMITTED', 5);
             if (index(submitted, 'CPE_IFUP_SUBMITTED') < 0) die('APN 已保存，等待 wwan 启动成功后重试');
           }
@@ -155,6 +162,10 @@ start_service() {
   /usr/libexec/cpe-status-wwan --prepare
   procd_open_instance speed
   procd_set_param command /usr/libexec/cpe-status-speed
+  procd_set_param respawn 3600 5 5
+  procd_close_instance
+  procd_open_instance qos
+  procd_set_param command /usr/libexec/cpe-status-qos-watch
   procd_set_param respawn 3600 5 5
   procd_close_instance
   procd_open_instance wwan

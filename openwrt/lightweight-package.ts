@@ -13,7 +13,11 @@ import { wwanManager, cpeInit, smsPoll } from './wwan-manager.ts'
 import { compileApns } from '../shared/apn.ts'
 import { validateAdapter } from '../backend/engine.ts'
 import type { ModemProfile } from '../shared/modem-profile.ts'
-import { packageManifest } from '../project.ts'
+import { packageManifest, packageRelease } from '../project.ts'
+import { serviceStatus, serviceControl } from './service-control.ts'
+import { luciStatusView } from './luci-view.ts'
+import { qosHelper, qosWatch, qosRead } from './qos.ts'
+import { moduleQosCollector } from './module-qos.ts'
 import { licenseText } from '../docs/license.ts'
 
 export async function generateLightweightPackage(root: string) {
@@ -35,7 +39,13 @@ export async function generateLightweightPackage(root: string) {
   await write('files/usr/libexec/cpe-status-apn', apnReader)
   await write('files/usr/libexec/cpe-status-wwan', wwanManager)
   await write('files/usr/libexec/cpe-status-sms-poll', smsPoll)
+  await write('files/usr/libexec/cpe-status-qos', qosHelper)
+  await write('files/usr/libexec/cpe-status-qos-watch', qosWatch)
+  await write('files/usr/libexec/cpe-status-qos-read', qosRead)
+  await write('files/usr/share/cpe-status/qos-collector.pl', moduleQosCollector)
   await write('files/etc/init.d/cpe-status', cpeInit)
+  await write('files/usr/libexec/cpe-status-service-status', serviceStatus)
+  await write('files/usr/libexec/cpe-status-service-control', serviceControl)
   await write('files/usr/share/cpe-status/apns.json', JSON.stringify(compileApns(await readFile('data/apns-conf_8.xml', 'utf8'))))
   await cp('data/apns-conf_8.xml', `${root}/files/usr/share/cpe-status/apns-conf_8.xml`)
 
@@ -50,34 +60,21 @@ export async function generateLightweightPackage(root: string) {
   await write('files/usr/libexec/cpe-status-operator-at', operatorAt)
   await write('files/etc/cpe-status.json', JSON.stringify({ device: '/dev/ttyUSB2', networkInterface: 'wwan', autoApn: true, smsStorage: '/etc/cpe-status/sms' }, null, 2))
   await write('files/usr/share/cpe-status/LICENSE', licenseText)
-  await write('files/www/luci-static/resources/view/modem/cpe-status.js', `'use strict';
-'require view';
-return view.extend({ render:function() {
-  var pages = [['仪表盘', '/'], ['频段与小区设置', '/band-lock'], ['运营商与APN设置', '/operators'], ['AT控制台', '/at-console'], ['短信', '/sms']];
-  var frame = E('iframe', { src:L.resource('cpe-status/index.html')+'?embedded=1&source=quectel#/', title:'CPE Status', style:'width:100%;height:calc(100vh - 210px);min-height:640px;border:0' });
-  var items = pages.map(function(page, index) {
-    return E('li', { 'class':index === 0 ? 'cbi-tab' : 'cbi-tab-disabled', role:'presentation' }, [
-      E('a', { href:'#', role:'tab', 'aria-selected':index === 0 ? 'true' : 'false', click:function(event) {
-        event.preventDefault();
-        items.forEach(function(item) { item.className = 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected','false'); });
-        this.parentNode.className = 'cbi-tab'; this.setAttribute('aria-selected','true');
-        frame.contentWindow.location.hash = page[1];
-      } }, page[0])
-    ]);
-  });
-  return E('div', {}, [E('h2', {}, 'CPE Status'), E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
-}, handleSave:null, handleSaveApply:null, handleReset:null });
-`)
+  await write('files/www/luci-static/resources/view/modem/cpe-status.js', luciStatusView)
   await write('files/usr/share/luci/menu.d/luci-app-cpe-status.json', JSON.stringify({
     'admin/modem': { title: 'Modem', order: 65, action: { type: 'firstchild' } },
     'admin/modem/cpe-status': { title: 'CPE Status', order: 20, action: { type: 'view', path: 'modem/cpe-status' }, depends: { acl: ['luci-app-cpe-status'] } },
   }, null, 2))
-  await write('files/usr/share/rpcd/acl.d/luci-app-cpe-status.json', JSON.stringify({ 'luci-app-cpe-status': { description: 'Read cached CPE modem status and control roaming, data, RF, bands, mode and cells', read: { ubus: { file: ['exec'] }, file: { '/usr/libexec/cpe-status-snapshot': ['exec'], '/usr/libexec/cpe-status-speed-settings': ['exec'], '/usr/libexec/cpe-status-control-result': ['exec'], '/usr/libexec/cpe-status-bands': ['exec'], '/usr/libexec/cpe-status-cell-locks': ['exec'], '/usr/libexec/cpe-status-scan-result': ['exec'], '/usr/libexec/cpe-status-operators': ['exec'] } }, write: { ubus: { file: ['exec'] }, file: { '/usr/libexec/cpe-status-apn': ['exec'], '/usr/libexec/cpe-status-messaging': ['exec'], '/usr/libexec/cpe-status-roaming': ['exec'], '/usr/libexec/cpe-status-control': ['exec'] } } } }, null, 2))
+  await write('files/usr/share/rpcd/acl.d/luci-app-cpe-status.json', JSON.stringify({ 'luci-app-cpe-status': { description: 'Read cached CPE modem status and control its service and modem settings', read: { ubus: { file: ['exec'] }, file: { '/usr/libexec/cpe-status-service-status': ['exec'], '/usr/libexec/cpe-status-snapshot': ['exec'], '/usr/libexec/cpe-status-speed-settings': ['exec'], '/usr/libexec/cpe-status-control-result': ['exec'], '/usr/libexec/cpe-status-bands': ['exec'], '/usr/libexec/cpe-status-cell-locks': ['exec'], '/usr/libexec/cpe-status-scan-result': ['exec'], '/usr/libexec/cpe-status-operators': ['exec'] } }, write: { ubus: { file: ['exec'] }, file: { '/usr/libexec/cpe-status-service-control': ['exec'], '/usr/libexec/cpe-status-apn': ['exec'], '/usr/libexec/cpe-status-messaging': ['exec'], '/usr/libexec/cpe-status-roaming': ['exec'], '/usr/libexec/cpe-status-control': ['exec'] } } } }, null, 2))
+  const aclPath = `${root}/files/usr/share/rpcd/acl.d/luci-app-cpe-status.json`
+  const acl = JSON.parse(await readFile(aclPath, 'utf8'))
+  acl['luci-app-cpe-status'].read.file['/usr/libexec/cpe-status-qos-read'] = ['exec']
+  await writeFile(aclPath, JSON.stringify(acl, null, 2))
   await cp('build/www', `${root}/files/www/luci-static/resources/cpe-status`, { recursive: true })
   await write('Makefile', `include $(TOPDIR)/rules.mk
 PKG_NAME:=luci-app-cpe-status
 PKG_VERSION:=${packageManifest.version}
-PKG_RELEASE:=0
+PKG_RELEASE:=${packageRelease}
 PKG_LICENSE:=GPL-3.0-only
 PKGARCH:=all
 include $(INCLUDE_DIR)/package.mk
@@ -86,7 +83,7 @@ define Package/$(PKG_NAME)
   CATEGORY:=LuCI
   SUBMENU:=3. Applications
   TITLE:=CPE Status (configurable modem monitor)
-  DEPENDS:=+luci-base +rpcd-mod-file +ucode +ucode-mod-fs +ucode-mod-ubus +sms-tool +comgt
+  DEPENDS:=+luci-base +rpcd-mod-file +ucode +ucode-mod-fs +ucode-mod-ubus +sms-tool +comgt +adb
   CONFLICTS:=luci-app-openwrt-modem
 endef
 define Package/$(PKG_NAME)/conffiles
@@ -102,7 +99,7 @@ define Package/$(PKG_NAME)/postinst
 	rm -f /tmp/luci-indexcache /tmp/luci-indexcache.*
 	rm -rf /tmp/luci-modulecache/
 	/etc/init.d/rpcd reload 2>/dev/null || true
-	/etc/init.d/cpe-status enable
+	[ "$\${PKG_UPGRADE}" = "1" ] || /etc/init.d/cpe-status enable
 	/etc/init.d/cpe-status restart
 }
 exit 0
@@ -122,7 +119,12 @@ define Package/$(PKG_NAME)/install
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-apn $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-wwan $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-sms-poll $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-qos $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-qos-watch $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-qos-read $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/etc/init.d/cpe-status $(1)/etc/init.d/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-service-status $(1)/usr/libexec/
+	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-service-control $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-roaming $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-control $(1)/usr/libexec/
 	$(INSTALL_BIN) $(PKG_BUILD_DIR)/usr/libexec/cpe-status-control-result $(1)/usr/libexec/

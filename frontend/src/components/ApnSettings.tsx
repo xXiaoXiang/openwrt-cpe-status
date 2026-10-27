@@ -5,9 +5,13 @@ import { request } from '../api/request'
 import { useCapabilities } from '../contexts/CapabilitiesContext'
 import { validateApnSettings, type ApnSettings as Settings, type ApnStatus } from '../../../shared/apn-settings.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
+import { operationSupported } from '../../../shared/availability.ts'
 
 export default function ApnSettings() {
-  const writable = useCapabilities()?.writes_enabled === true
+  const capabilities = useCapabilities()
+  const profile = capabilities?.modem_profile
+  const permitted = capabilities?.writes_enabled === true
+  const writable = permitted && (!profile || ['simPin', 'iccid', 'radio'].every(name => operationSupported(profile, name)))
   const [status, setStatus] = useState<ApnStatus>()
   const [form, setForm] = useState<Settings>()
   const [saving, setSaving] = useState(false), [reading, setReading] = useState(false)
@@ -38,9 +42,9 @@ export default function ApnSettings() {
   }, [read])
   useEffect(() => {
     active.current = true
-    if (writable) void reload()
+    if (permitted) void reload()
     return () => { active.current = false }
-  }, [reload, writable])
+  }, [reload, permitted])
   useEffect(() => {
     if (!saving) return
     const timer = setInterval(() => void read(), 1500)
@@ -68,7 +72,7 @@ export default function ApnSettings() {
     <Box display="flex" alignItems="center" gap={1}><SimCard color="primary" /><Typography variant="h6" flex={1}>APN 配置</Typography><Button disabled={!writable || saving || reading} onClick={() => { dirty.current = false; void reload() }}>读取配置</Button></Box>
     <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center" data-active-apn>
       <Typography variant="body2">当前APN</Typography>
-      {status?.sampled_at ? <Chip size="small" label={status.active ? '已激活' : '未激活'} color={status.active ? 'success' : 'default'} /> : <CircularProgress size={16} aria-label="读取APN" />}
+      {status?.active_supported === false ? <Typography color="text.secondary">-</Typography> : status?.sampled_at ? <Chip size="small" label={status.active ? '已激活' : '未激活'} color={status.active ? 'success' : 'default'} /> : <CircularProgress size={16} aria-label="读取APN" />}
       {status?.active && <><Chip size="small" variant="outlined" label={`APN: ${status.active_apn || '—'}`} /><Chip size="small" variant="outlined" label={`协议: ${{ IP: 'IPv4', IPV6: 'IPv6', IPV4V6: 'IPv4/IPv6' }[status.active_protocol?.toUpperCase() || ''] || status.active_protocol || '—'}`} /></>}
     </Stack>
     <Divider />

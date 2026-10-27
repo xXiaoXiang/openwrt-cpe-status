@@ -32,6 +32,12 @@ function save(path, value) {
   chmod(temp, 0600);
   if (!rename(temp, path)) die('Cannot store snapshot');
 }
+// Internal caches can retain the adapter for local consumers. Never resend
+// the complete rule set with periodic snapshots or control-job results.
+function snapshotPayload(value) {
+  if (!value) return value;
+  let result = { ...value }; delete result.adapter; return result;
+}
 let config = readJSON(configPath) || {};
 let port = config.device || '/dev/ttyUSB2', iface = config.networkInterface || 'wwan';
 if (!match(port, /^\/dev\/tty(USB|ACM)[0-9]+$/) || !match(iface, /^[a-zA-Z0-9_]{1,32}$/)) die('Invalid AT port or interface');
@@ -41,7 +47,7 @@ function bounded(cmd, seconds) {
   return command(cmd + ' & child=$!; (sleep ' + seconds + '; kill "$child" 2>/dev/null; sleep 1; kill -9 "$child" 2>/dev/null) >/dev/null 2>&1 & guard=$!; wait "$child"; rc=$?; kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null; exit "$rc"');
 }
 `.replace('__CACHE_SECONDS__', JSON.stringify(cacheSeconds)) + profileRuntime
-export const statusCollector = statusRuntime + String.raw`if (ARGV[0] == 'profile') { print(sprintf('%J\n', { status: profile ? 'ok' : 'unsupported', data: profile, message: profileError })); exit(0); }
+export const statusCollector = statusRuntime + String.raw`if (ARGV[0] == 'profile') { print(sprintf('%J\n', { status: profile ? 'ok' : 'unsupported', data: profile, profile_key: profileKey, usb_id: usbId, device: port, message: profileError })); exit(0); }
 const groups = profile?.groups || {};
 function host(previous, now) {
   let bus = connect(), system = readJSON(directory + '/system.json');
@@ -79,7 +85,7 @@ function output(value) {
     value.host.counters = speed.counters; value.host.previous_counters = speed.previous_counters;
     value.host.speed_time = speed.time; value.host.speed_previous_time = speed.previous_time;
   }
-  print(sprintf('%J\n', value));
+  print(sprintf('%J\n', snapshotPayload(value)));
 }
 if (!update && fresh) { output(previous); exit(0); }
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
@@ -111,11 +117,12 @@ try {
     if (result.attempted?.[key] && now - result.attempted[key] < cacheSeconds.failure) continue;
     let identity = key == 'sim' ? readJSON(directory + '/sim-identity.json') : null;
     let reuse = identity?.present && identity.iccid && identity.imsi && now - identity.checked < 60;
-    let names = reuse ? filter(group.names, name => name != 'iccid' && name != 'imsi') : group.names;
-    let raw = bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileBatch(names)), 5);
+    let names = filter(group.names, name => profileHas(name) && !(reuse && (name == 'iccid' || name == 'imsi')));
+    // All-unavailable groups produce no AT command and no retry/backoff loop.
+    let raw = length(names) ? bounded('sms_tool -d ' + port + ' at ' + profileQuote(profileBatch(names)), 5) : '';
     let valid = true;
     try {
-      for (let name in group.required || [group.names[0]]) if (!(reuse && (name == 'iccid' || name == 'imsi'))) profileParse(name, raw);
+      for (let name in group.required || [group.names[0]]) if (profileHas(name) && !(reuse && (name == 'iccid' || name == 'imsi'))) profileParse(name, raw);
     } catch(e) { valid = false; }
     if (!valid) {
       if ((key == 'sim' || key == 'status') && profileAbsent(raw)) {
@@ -139,7 +146,7 @@ try {
   output(result);
 } catch(e) {
   save(directory + '/failure.json', { time: time() });
-  print(sprintf('%J\n', previous || { error: 'ModemReadDeferred: ' + e, retry_after_ms: 10000 }));
+  output(previous || { error: 'ModemReadDeferred: ' + e, retry_after_ms: 10000 });
 }
 unlink(lock + '/pid'); rmdir(lock);
 `

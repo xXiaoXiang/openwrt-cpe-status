@@ -26,6 +26,8 @@ function history(path) { return readJSON(path + '/cpe-sms-history.json') || { ne
 function storeHistory(path, value) { save(path + '/cpe-sms-history.json', value); }
 let action = ARGV[0] || 'list', storage = storagePath(config.smsStorage || '/etc/cpe-status/sms');
 mkdir(directory, 0700);
+let smsSupported = profileEnabled('sms') && profile?.sms?.transport == 'sms-tool-3gpp';
+if ((action == 'send' || action == 'sync') && !smsSupported) { reply(profileUnsupported('sms')); exit(0); }
 if (action == 'config' && length(ARGV) == 1) { reply({ status: 'ok', data: { path: storage } }); exit(0); }
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
 if (!mkdir(lock, 0700)) {
@@ -87,7 +89,7 @@ try {
       }
       if (action == 'sync' || !last || time() - last.time >= 30) {
         let sim = readJSON(directory + '/sim-identity.json'), identity = sim?.iccid || sim?.imsi || 'unknown';
-        for (let memory in profile?.sms?.transport == 'sms-tool-3gpp' ? profile.sms.memories : []) {
+        for (let memory in smsSupported ? profile.sms.memories : []) {
           let raw = bounded('sms_tool -d ' + port + ' -s ' + memory + ' -j -f ' + quote('%Y-%m-%dT%H:%M:%SZ') + ' recv 2>/dev/null', profile.sms.receiveTimeout), value = null;
           try { value = json(raw); } catch(e) {}
           if (!value || type(value.msg) != 'array') { push(warnings, memory + ' 短信读取暂未成功'); continue; }

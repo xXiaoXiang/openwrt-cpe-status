@@ -24,14 +24,19 @@ function refreshProfile() {
     let value = json(content);
     if (value.schemaVersion != 1 || !value.commands || !value.groups || index(value.usbIds || [], usbId) < 0) die('模块适配文件 schema/USB ID 不匹配');
     profileRegex(value.modelPattern);
+    for (let name, reason in value.unsupportedOperations || {}) if (!match(name, /^[a-zA-Z][a-zA-Z0-9]*$/) || type(reason) != 'string' || !length(reason) || length(reason) > 512) die('Invalid unsupported operation declaration');
     for (let name, operation in value.commands) {
       if (index(['read','write'], operation.kind) < 0) die('Invalid profile operation kind');
       if (!match(name, /^[a-zA-Z][a-zA-Z0-9]*$/) || !match(operation.command || '', /^AT[ -~]+$/) || index(operation.command, "'") >= 0 || length(operation.command) > 1024) die('模块命令配置无效');
       for (let rule in operation.rules || []) { profileRegex(rule.regex); if (rule.segments) profileRegex(rule.segments); for (let field in values(rule.fields || {})) if (field.pattern) profileRegex(field.pattern); }
+      for (let key, choices in operation.parameterValues || {}) {
+        if (!operation.parameters?.[key] || type(choices) != 'array' || !length(choices)) die('Invalid supported parameter values');
+        for (let choice in choices) if (type(choice) != 'string' || !match(choice, profileRegex('^(' + operation.parameters[key] + ')$'))) die('Invalid supported parameter choice');
+      }
     }
     for (let group in values(value.groups)) {
       if (group.ttl < 1 || group.ttl > 604800 || !length(group.names || [])) die('Invalid profile cache group');
-      for (let name in group.names) if (value.commands[name]?.kind != 'read') die('Read cache group cannot contain a write operation');
+      for (let name in group.names) if (!(name in (value.unsupportedOperations || {})) && value.commands[name]?.kind != 'read') die('Read cache group cannot contain a write operation');
       for (let name in group.required || []) if (index(group.names, name) < 0) die('Required group operation is missing');
     }
     let fingerprint = match(command('sha256sum ' + profileQuote(file)), /^[0-9a-f]{64}/)?.[0];
@@ -40,13 +45,17 @@ function refreshProfile() {
   } catch(e) { profile = null; profileKey = ''; profileError = '' + e; return false; }
 }
 refreshProfile();
+function profileEnabled(name) { return profile && !(name in (profile.unsupportedOperations || {})); }
+function profileHas(name) { return profileEnabled(name) && !!profile.commands[name]; }
+function profileUnsupported(name) { return { status: 'unsupported', message: 'Not applicable', display: '-', reason: profile?.unsupportedOperations?.[name] || name, submitted: false }; }
 function profileCommand(name, parameters) {
   if (!profile) die(profileError || '模块尚未适配');
   let operation = profile.commands[name];
-  if (!operation) die('模块适配未提供操作：' + name);
+  if (!profileHas(name)) die('Unsupported: ' + (profile.unsupportedOperations?.[name] || name));
   let cmd = operation.command;
   for (let key, pattern in operation.parameters || {}) {
     let value = parameters?.[key];
+    if (operation.parameterValues?.[key] && index(operation.parameterValues[key], value) < 0) die('Unsupported: ' + key + '=' + value);
     if (type(value) != 'string' || !match(value, profileRegex('^(' + pattern + ')$')) || match(value, /[[:cntrl:]']/)) die('Invalid AT parameter: ' + key);
     cmd = replace(cmd, '{' + key + '}', value);
   }
@@ -56,6 +65,7 @@ function profileCommand(name, parameters) {
 function profileBatch(names) {
   let result = [];
   for (let name in names) {
+    if (!profileHas(name)) continue;
     if (profile?.commands[name]?.kind != 'read') die('Batch query cannot execute a write operation');
     push(result, substr(profileCommand(name), 2));
   }
@@ -92,7 +102,7 @@ function profileField(raw, rule) {
   return raw;
 }
 function profileParse(name, raw) {
-  if (!profile?.commands[name]) die('Unsupported profile operation ' + name);
+  if (!profileHas(name)) return [];
   let records = [];
   for (let line in split(raw || '', '\n')) for (let rule in profile.commands[name].rules || []) {
     let found = match(trim(line), profileRegex(rule.regex));

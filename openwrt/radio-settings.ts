@@ -12,6 +12,8 @@ function modeReply(raw) {
   return uc(mode);
 }
 function parseLock(raw, rat) {
+  let operation = rat == 'lte' ? 'lteCellLock' : 'nrCellLock';
+  if (!profileHas(operation)) return { ...profileUnsupported(operation), cells: [], raw: '' };
   let result = { status: 'error', cells: [], raw };
   try {
     if (atError(raw)) die(atError(raw));
@@ -29,9 +31,9 @@ function parseLock(raw, rat) {
   return result;
 }
 function readCellLocks() {
-  let result = { device: port, lte: parseLock(radioAt(profileCommand('lteCellLock')), 'lte'), nr: parseLock(radioAt(profileCommand('nrCellLock')), 'nr'), sampled_at: time() };
+  let result = { device: port, lte: parseLock(profileHas('lteCellLock') ? radioAt(profileCommand('lteCellLock')) : '', 'lte'), nr: parseLock(profileHas('nrCellLock') ? radioAt(profileCommand('nrCellLock')) : '', 'nr'), sampled_at: time() };
   let previous = readJSON(directory + '/cell-locks.json');
-  for (let rat in ['lte', 'nr']) if (result[rat].status != 'ok' && previous?.device == port) {
+  for (let rat in ['lte', 'nr']) if (result[rat].status == 'error' && previous?.device == port) {
     result[rat].previous = previous[rat]?.status == 'ok' ? previous[rat] : previous[rat]?.previous;
     // Keep last success across repeated failed reads, but never confirm writes from it.
   }
@@ -50,6 +52,7 @@ function lockConfirmed(state, target) {
 export const cellLockReader = statusRuntime + radioSettingsRuntime + String.raw`
 function reply(value) { print(sprintf('%J\n', value)); }
 mkdir(directory, 0700);
+if (profile && !profileHas('lteCellLock') && !profileHas('nrCellLock')) { reply(profileUnsupported('lteCellLock')); exit(0); }
 const self = getenv('CPE_STATUS_CELL_SCRIPT') || '/usr/libexec/cpe-status-cell-locks';
 if (!match(self, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid cell read executable');
 if (length(ARGV) > 1 || (length(ARGV) && index(['refresh','--refresh'],ARGV[0]) < 0)) die('Invalid cell read arguments');

@@ -7,7 +7,8 @@ export interface ApnSettings {
 }
 export interface ApnStatus {
   settings: ApnSettings
-  active: boolean
+  active?: boolean
+  active_supported?: boolean
   active_apn?: string
   active_protocol?: string
   sampled_at?: number

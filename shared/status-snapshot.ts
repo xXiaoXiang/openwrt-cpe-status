@@ -4,6 +4,7 @@ import { normalizeCells } from '../backend/cells.ts'
 import type { Scalar, ApiResponse } from './adapter.ts'
 import { connectionFromHost, interfaceAliases, type HostNetwork } from './host-network.ts'
 import { roamingPreference, snapshotCapabilities } from './roaming.ts'
+import { operationSupported, unsupportedResult } from './availability.ts'
 
 export interface RouterHost extends HostNetwork {
   time: number; previous_time: number
@@ -20,7 +21,7 @@ export interface StatusSnapshot {
 }
 const registration = (value: Scalar | undefined) => ({ 0: 'unregistered', 1: 'registered', 2: 'searching', 3: 'denied', 4: 'unknown', 5: 'roaming', 8: 'emergency' }[Number(value)] ?? 'unknown')
 export function snapshotRoutes(snapshot: StatusSnapshot): Record<string, ApiResponse> {
-  const parsed = (name: string, group: string) => { try { return parseReply(snapshot.adapter!.commands[name], snapshot.raw[group] ?? '') } catch { return [] } }
+  const parsed = (name: string, group: string) => { try { return operationSupported(snapshot.adapter, name) ? parseReply(snapshot.adapter!.commands[name], snapshot.raw[group] ?? '') : [] } catch { return [] } }
   const row = (name: string, group: string) => parsed(name, group)[0] ?? {}
   const ok = (data: unknown): ApiResponse => ({ status: 'ok', message: 'Success', data })
   const unsupported: ApiResponse = { status: 'unsupported', message: '此状态版仅采集信息；该功能未启用' }
@@ -76,5 +77,9 @@ export function snapshotRoutes(snapshot: StatusSnapshot): Record<string, ApiResp
   if (!offline && !snapshot.sampled.cells) routes['/api/cells'] = { status: 'deferred', message: '等待小区快照', retry_after_ms: 10000 }
   if (simPin.pin_required === undefined && !new RegExp(snapshot.adapter?.simAbsentPattern ?? '(?!)').test(snapshot.raw.status ?? '')) routes['/api/sim'] = { status: 'deferred', message: '等待 SIM 状态', retry_after_ms: 10000 }
   if (radio.functionality === undefined) routes['/api/airplane-mode'] = { status: 'deferred', message: '等待射频状态', retry_after_ms: 10000 }
+  // Explicit absence is final, unlike a supported read awaiting its first sample.
+  if (snapshot.adapter) for (const [path, name] of Object.entries({ '/api/network-mode': 'mode', '/api/airplane-mode': 'radio', '/api/roaming': 'roamingPreference', '/api/cells': 'serving', '/api/sim': 'simPin' })) {
+    if (!operationSupported(snapshot.adapter, name)) routes[path] = unsupportedResult(snapshot.adapter.unsupportedOperations?.[name] || name)
+  }
   return routes
 }

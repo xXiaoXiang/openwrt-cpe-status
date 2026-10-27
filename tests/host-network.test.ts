@@ -28,6 +28,18 @@ test('MBIM children contribute addresses/PD while parent retains protocol/device
   assert.deepEqual(connectionFromHost(value).ipv4, [])
 })
 
+test('parent stays active before DHCP/DHCPv6 and later accepts IPv6-only child data', () => {
+  const value = host()
+  value.net.pending = true
+  value.networks = []
+  assert.equal(connectionFromHost(value).active, true)
+  assert.deepEqual(connectionFromHost(value).ipv4, [])
+  assert.deepEqual(connectionFromHost(value).ipv6, [])
+  value.networks = [{ interface: 'wwan_6', dynamic: true, up: true, l3_device: 'wwan0', 'ipv6-address': [{ address: '2408:1234::2', mask: 64 }], 'ipv6-prefix': [{ address: '2408:1234:100::', mask: 56 }] }]
+  assert.deepEqual(connectionFromHost(value).ipv6, ['2408:1234::2/64'])
+  assert.deepEqual(connectionFromHost(value).ipv6_prefix, ['2408:1234:100::/56'])
+})
+
 test('kernel address fallback excludes link-local/tentative IPv6 and never invents PD', () => {
   const value = host()
   value.networks = []

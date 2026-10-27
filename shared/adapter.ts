@@ -31,6 +31,7 @@ export interface CommandDefinition {
   rules: ReplyRule[]
   allowEmpty?: boolean
   parameters?: Record<string, string>
+  parameterValues?: Record<string, string[]>
   invalidates?: string[]
   example?: string
   reference: string
@@ -46,6 +47,7 @@ export interface ModemAdapter {
   transport: { baudRate: number; preferredUsbInterface: string; note: string }
   documents: { title: string; url: string; scope: string }[]
   commands: Record<string, CommandDefinition>
+  unsupportedOperations?: Record<string, string>
 }
 export interface Reading {
   values: Record<string, Scalar>[]
@@ -60,4 +62,6 @@ export interface ApiResponse<T = unknown> {
   retry_after_ms?: number
   stale?: boolean
   sampled_at?: number
+  display?: string
+  reason?: string
 }

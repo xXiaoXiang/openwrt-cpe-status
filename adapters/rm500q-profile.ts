@@ -7,6 +7,8 @@ const f = (index: number, type: 'number' | 'string' | 'hex' = 'string', extra = 
 const r = (regex: string, fields: ReplyRule['fields'], constants?: ReplyRule['constants']): ReplyRule => ({ regex, format: 'csv', fields, constants })
 const query = (command: string, rules: ReplyRule[], extra = {}): CommandDefinition => ({ command, kind: 'read', ttlMs: 86400000, timeoutMs: 5000, rules, reference: 'Quectel RM5xxQ AT manual / 3GPP TS 27.007', ...extra })
 const commands = structuredClone(rm500q.commands)
+commands.modeSet.parameterValues = { mode: ['AUTO', 'LTE:NR5G', 'LTE', 'NR5G', 'WCDMA:LTE', 'WCDMA'] }
+commands.roamingSet.parameterValues = { preference: ['1', '255'] }
 commands.model.rules = [{ regex: '^(RM500Q-GL)$', format: 'captures', fields: { model: f(0) } }]
 for (const rule of commands.carriers.rules) rule.fields.band_number = f(3, 'number', { pattern: 'BAND ([0-9]+)$' })
 commands.bandCapabilities.rules = [r('^\\+QNWPREFCFG:\\s*("(lte_band|nr5g_band|nsa_nr5g_band)",.*)$', { rat: f(0, 'string', { map: { lte_band: 'lte', nr5g_band: 'sa', nsa_nr5g_band: 'nsa' } }), bands: f(1) })]
@@ -35,6 +37,8 @@ for (const command of Object.values(commands)) {
 export const rm500qProfile: ModemProfile = {
   ...structuredClone(rm500q), id: 'quectel-rm500q-gl', firmwareBaseline: 'R11 baseline; validated with RM500QGLABR13A03M4G', commands,
   usbIds: ['2c7c0800'],
+  diagQos: { transport: 'adb-diag-socket', timeoutSeconds: 90 },
+  unsupportedOperations: {},
   _comment: [
     '管理员可直接编辑此 JSON .conf。只支持声明式命令/解析规则，不执行文件中的脚本。升级保留用户修改。',
     '按专用AT串口的USB父设备 idVendor+idProduct 选择文件；未知ID不会套用移远配置。新增型号复制文件并修改usbIds、命令、字段规则及能力。',
@@ -43,6 +47,8 @@ export const rm500qProfile: ModemProfile = {
     'map解码枚举，scale/offset转换物理单位，pattern从字段提取第1捕获组；optional/unknown处理缺值。constants补充固定语义。',
     'segments用于同一行多个括号元组；repeat用于计数+定长重复字段。使用JS与POSIX共有正则子集，不使用非捕获组/前后查找。',
     'groups.names为可合并查询的语义操作名，required是成功缓存所需操作；ttl单位秒。各controls写入后必须重新读取对应操作确认。',
+    'unsupportedOperations以操作名映射不支持原因，优先于commands；可保留原命令或移除命令。不查询、不重试、不作为false/0或成功写入。接口统一status=unsupported,message=Not applicable,display=-。',
+    'parameterValues列出支持的写入值，和parameters正则同时校验。例如4G型号modeSet.parameterValues.mode仅保留AUTO/LTE/WCDMA:LTE/WCDMA；不支持的5G查询/频段/锁小区操作分别声明。',
     '短信使用可选sms-tool-3gpp标准PDU传输，内部CMGF/CPMS/CMGL/CMGS由sms_tool实现；不支持标准3GPP短信的型号应移除sms能力，不能假装仅改正则即可支持私有协议。',
   ],
   contracts: {

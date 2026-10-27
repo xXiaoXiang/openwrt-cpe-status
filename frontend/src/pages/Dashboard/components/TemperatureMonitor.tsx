@@ -13,12 +13,15 @@ import Grid from '@mui/material/Grid'
 import { Thermostat } from '@mui/icons-material'
 import { getTempColor } from '../utils'
 import type { SystemStatsResponse } from '@/api/types'
+import { useCapabilities } from '@/contexts/CapabilitiesContext'
+import { operationSupported } from '../../../../../shared/availability.ts'
 
 interface TemperatureMonitorProps {
   systemStats: SystemStatsResponse | null
 }
 
 export function TemperatureMonitor({ systemStats }: TemperatureMonitorProps) {
+  const profile = useCapabilities()?.modem_profile
   const sensors = systemStats?.temperature
   const mainSensor = sensors?.find((sensor) => sensor.type.includes('soc')) ?? sensors?.[0]
 
@@ -55,7 +58,7 @@ export function TemperatureMonitor({ systemStats }: TemperatureMonitorProps) {
           </Grid>
         ) : (
           <Typography variant="body2" color="text.secondary">
-            暂无数据
+            {profile && !operationSupported(profile, 'temperature') ? '-' : '暂无数据'}
           </Typography>
         )}
       </CardContent>

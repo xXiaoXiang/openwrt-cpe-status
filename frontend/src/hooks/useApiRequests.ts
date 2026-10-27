@@ -29,10 +29,12 @@ export function useApiRequests() {
     request: () => Promise<ApiResponse<T>>,
     apply: (data: T) => void,
     onDeferred?: () => void,
+    onUnsupported?: () => void,
   ) => run(key, async () => {
     try {
       const response = await request()
       if (response.status === 'unsupported') {
+        if (active.current) onUnsupported?.()
         errors.current.delete(key)
         setWaiting(current => { const next = { ...current }; delete next[key]; return next })
         setReady(current => ({ ...current, [key]: true }))

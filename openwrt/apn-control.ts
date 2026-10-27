@@ -36,6 +36,9 @@ if (length(ARGV) > 1 || (length(ARGV) && index(['refresh','--refresh'], ARGV[0])
 let refresh = directory + '/apn-refresh';
 try {
   let settings = apnSettings();
+  if (profile && (!profileHas('contexts') || !profileHas('contextsActive'))) {
+    print(sprintf('%J\n', { status: 'ok', data: { settings, active_supported: false, logs: [], sampled_at: time() }, refreshing: false })); exit(0);
+  }
   if (ARGV[0] == '--refresh') {
     let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
     let acquired = mkdir(lock, 0700);

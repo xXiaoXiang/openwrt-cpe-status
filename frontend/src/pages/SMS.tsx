@@ -50,6 +50,8 @@ import { api, type SmsMessage, type SmsStats } from '../api'
 import { useRefreshInterval } from '../contexts/RefreshContext'
 import { useAdaptivePolling } from '../hooks/useAdaptivePolling'
 import { useSingleFlight } from '../hooks/useSingleFlight'
+import { useCapabilities } from '../contexts/CapabilitiesContext'
+import { featureEnabled } from '../../../shared/availability.ts'
 
 interface ConversationGroup {
   phoneNumber: string
@@ -59,6 +61,9 @@ interface ConversationGroup {
 }
 
 export default function SMSPage() {
+  const capabilities = useCapabilities()
+  const profile = capabilities?.modem_profile
+  const smsSupported = !profile || (featureEnabled(profile, 'sms') && profile.sms?.transport === 'sms-tool-3gpp')
   const isMobile = useMediaQuery<Theme>((theme: Theme) => theme.breakpoints.down('md'))
   const { refreshInterval, refreshKey } = useRefreshInterval()
   const run = useSingleFlight()
@@ -242,6 +247,7 @@ export default function SMSPage() {
 
   // 发送短信
   const handleSend = async () => {
+    if (!smsSupported) return
     if (!phoneNumber.trim()) {
       setError('请输入电话号码')
       return
@@ -519,7 +525,7 @@ export default function SMSPage() {
           value={content}
           onChange={(e: ChangeEvent<HTMLInputElement>) => setContent(e.target.value)}
           placeholder="输入短信内容..."
-          disabled={sendLoading}
+          disabled={sendLoading || !smsSupported}
           onFocus={() => { inputFocusedRef.current = true }}
           onBlur={() => { inputFocusedRef.current = false }}
           onKeyDown={(e: KeyboardEvent<HTMLInputElement>) => {
@@ -535,7 +541,7 @@ export default function SMSPage() {
                   <IconButton
                     color="primary"
                     onClick={() => void handleSend()}
-                    disabled={sendLoading || !content.trim()}
+                    disabled={sendLoading || !content.trim() || !smsSupported}
                   >
                     {sendLoading ? <CircularProgress size={24} /> : <Send />}
                   </IconButton>
@@ -571,6 +577,7 @@ export default function SMSPage() {
         <Typography variant="h5" fontWeight={600}>
           短信管理
         </Typography>
+        {!smsSupported && <Typography color="text.secondary">-</Typography>}
       </Box>
 
       <SmsStorage />

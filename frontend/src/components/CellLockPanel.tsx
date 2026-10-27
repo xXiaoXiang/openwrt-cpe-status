@@ -10,6 +10,7 @@ import { CellInfo } from '../pages/Dashboard/components/CellInfo'
 import { cellTarget, cellLockParams, cellLockCommand, type CellLockRequest, type CellLockState } from '../../../shared/radio-settings.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import type { CellsResponse } from '../api/types'
+import { operationSupported } from '../../../shared/availability.ts'
 
 export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (busy: boolean) => void; disabled?: boolean }) {
   const { refreshInterval, refreshKey } = useRefreshInterval()
@@ -24,13 +25,15 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
   const [notice, setNotice] = useState<{ severity: 'info' | 'error' | 'success'; text: string }>()
   const active = useRef(true), reading = useRef(false), writing = useRef(false), revision = useRef(0)
   const writable = capabilities?.writes_enabled === true
+  const profile = capabilities?.modem_profile
+  const supported = (name: string) => !profile || operationSupported(profile, name)
   const readLocks = useCallback(async (force = false) => {
     const started = revision.current
     for (let attempt = 0; attempt < 12 && active.current; attempt++) {
       const result = await request<ApiResponse<CellLockState>>(force && attempt === 0 ? '/cell-lock/refresh' : '/cell-lock')
       if (!active.current || started !== revision.current) return
       if (result.data) setLocks(result.data)
-      if (result.status === 'error' || (result.status === 'ok' && result.data && !result.data.stale)) return result
+      if (result.status === 'unsupported' || result.status === 'error' || (result.status === 'ok' && result.data && !result.data.stale)) return result
       await new Promise(resolve => window.setTimeout(resolve, 2000))
     }
   }, [])
@@ -38,6 +41,7 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
     const started = revision.current
     const result = await request<CellScanResponse>('/cell-scan')
     if (!active.current || started !== revision.current) return result
+    if (result.status === 'unsupported') { setScanCells(null); setScanning(false); return result }
     // While a new job runs, data is the previous scan's successful result.
     // Do not present that old list as the result of the pending scan.
     if (result.data && restore && !result.scanning && result.status === 'ok') { setScanCells(parseCellScan(result.data.raw, result.data.records)) }
@@ -61,6 +65,7 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
           if (!active.current || started !== revision.current) break
           if (live.data) { setCells(live.data) }
           if (live.status === 'ok' && live.data) break
+          if (live.status === 'unsupported') { setCells(null); break }
           if (live.status === 'error') { setNotice({ severity: 'error', text: live.message }); break }
           await new Promise(resolve => window.setTimeout(resolve, 2000))
         }
@@ -106,6 +111,7 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
     try {
       const result = await request<ApiResponse<CellsResponse>>('/cells')
       if (!active.current || started !== revision.current) return
+      if (result.status === 'unsupported') { setCells(null); setNotice(undefined); return }
       if (result.data) { setCells(result.data) }
       if (result.status !== 'ok') setNotice({ severity: result.status === 'error' ? 'error' : 'info', text: result.message || '模块暂忙，请稍后重试' })
     } catch (error) { if (active.current) setNotice({ severity: 'error', text: String(error) }) }
@@ -141,8 +147,8 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
       {(['lte', 'nr'] as const).map(rat => {
         const displayed = displayedLock(rat)
         return <Box key={rat} display="flex" alignItems="center" gap={1} sx={{ mr: { xs: 1, sm: 4 } }}>
-          <Chip size="small" color={displayed ? displayed.count ? 'warning' : 'success' : 'default'} label={`${rat.toUpperCase()}：${displayed ? displayed.count ? displayed.cells.map(cell => `${cell.arfcn}/${cell.pci}`).join(' · ') : '未锁定' : '状态未知'}`} />
-          <Button size="small" startIcon={busy ? <CircularProgress size={14} /> : <LockOpen />} disabled={!writable || busy || scanning || disabled} onClick={() => setConfirmation({ action: 'unlock', rat })}>解除{rat.toUpperCase()}锁定</Button>
+          <Chip size="small" color={supported(rat === 'lte' ? 'lteCellLock' : 'nrCellLock') && displayed ? displayed.count ? 'warning' : 'success' : 'default'} label={`${rat.toUpperCase()}：${!supported(rat === 'lte' ? 'lteCellLock' : 'nrCellLock') ? '-' : displayed ? displayed.count ? displayed.cells.map(cell => `${cell.arfcn}/${cell.pci}`).join(' · ') : '未锁定' : '状态未知'}`} />
+          <Button size="small" startIcon={busy ? <CircularProgress size={14} /> : <LockOpen />} disabled={!writable || busy || scanning || disabled || !supported(rat === 'lte' ? 'lteCellLock' : 'nrCellLock') || !supported(rat === 'lte' ? 'lteCellUnlock' : 'nrCellUnlock')} onClick={() => setConfirmation({ action: 'unlock', rat })}>解除{rat.toUpperCase()}锁定</Button>
         </Box>
       })}
       <Button size="small" disabled={busy || scanning || disabled} onClick={() => void readLocks(true)}>读取锁定</Button>
@@ -152,9 +158,10 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
     </Tabs>
     </Box>
     {notice && <Alert severity={notice.severity} onClose={() => setNotice(undefined)}>{notice.text}</Alert>}
-    <CellInfo cellsInfo={view === 0 ? cells : scanCells} showPlmn={view === 1} headerAction={<Tooltip title="刷新小区信息"><span><IconButton aria-label="刷新小区信息" size="small" disabled={busy || scanning || disabled || (view === 1 && !writable)} onClick={() => void (view === 0 ? readCurrent() : scan())}>{scanning ? <CircularProgress size={18} /> : <Refresh fontSize="small" />}</IconButton></span></Tooltip>} renderAction={cell => {
+    <CellInfo cellsInfo={view === 0 ? cells : scanCells} unavailable={!supported(view === 0 ? 'serving' : 'cellScan')} showPlmn={view === 1} headerAction={<Tooltip title="刷新小区信息"><span><IconButton aria-label="刷新小区信息" size="small" disabled={busy || scanning || disabled || !supported(view === 0 ? 'serving' : 'cellScan') || (view === 1 && !writable)} onClick={() => void (view === 0 ? readCurrent() : scan())}>{scanning ? <CircularProgress size={18} /> : <Refresh fontSize="small" />}</IconButton></span></Tooltip>} renderAction={cell => {
       const selected = cellTarget(cell)
       if (!selected) return <Typography variant="caption" color="text.secondary">参数缺失</Typography>
+      if (!supported(selected.rat === 'lte' ? 'lteCellLockSet' : 'nrCellLockSet') || !supported(selected.rat === 'lte' ? 'lteCellLock' : 'nrCellLock')) return <Typography variant="caption" color="text.secondary">-</Typography>
       const locked = displayedLock(selected.rat)?.cells.some(target => target.arfcn === selected.arfcn && target.pci === selected.pci)
       if (locked) {
         const label = `当前已锁定此小区：${selected.rat.toUpperCase()} 频点 ${selected.arfcn}，PCI ${selected.pci}`

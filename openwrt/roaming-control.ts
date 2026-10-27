@@ -8,6 +8,10 @@ if (length(ARGV) != 1 || (ARGV[0] != '1' && ARGV[0] != '255')) {
   reply({ status: 'error', message: 'Invalid roaming preference; expected 1 or 255' }); exit(0);
 }
 mkdir(directory, 0700);
+try {
+  if (!profileHas('roamingPreference')) { reply(profileUnsupported('roamingPreference')); exit(0); }
+  profileCommand('roamingSet', { preference: ARGV[0] });
+} catch(e) { reply(index('' + e, 'Unsupported:') >= 0 ? profileUnsupported('' + e) : { status: 'error', message: '' + e }); exit(0); }
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', deadline = time() + 10;
 while (!mkdir(lock, 0700)) {
   let owner = +text(lock + '/pid'), info = stat(lock);

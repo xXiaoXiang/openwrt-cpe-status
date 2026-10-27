@@ -154,9 +154,9 @@ export interface CellsResponse {
 
 // QoS 信息
 export interface QosInfo {
-  qci: number
-  dl_speed: number
-  ul_speed: number
+  qci: number | null
+  dl_speed: number | null
+  ul_speed: number | null
 }
 
 // 温度传感器

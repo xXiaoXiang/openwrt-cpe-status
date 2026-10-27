@@ -70,6 +70,7 @@ export function renderCommand(definition: CommandDefinition, parameters: Record<
   const command = definition.command.replace(/\{([a-z_]+)\}/g, (_, name: string) => {
     const value = parameters[name]
     const pattern = definition.parameters?.[name]
+    if (typeof value === 'string' && definition.parameterValues?.[name] && !definition.parameterValues[name].includes(value)) throw new Error(`Unsupported: ${name}=${value}`)
     if (!pattern || typeof value !== 'string' || !new RegExp(`^(?:${pattern})$`).test(value)) throw new Error(`Invalid parameter: ${name}`)
     return value
   })

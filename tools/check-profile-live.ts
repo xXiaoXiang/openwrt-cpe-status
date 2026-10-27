@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile, readdir } from 'node:fs/promises'
 import assert from 'node:assert/strict'
 import { snapshotRoutes, type StatusSnapshot } from '../shared/status-snapshot.ts'
 import { profileFixture } from './profile-fixture.ts'
+import type { ProfileReply } from '../frontend/src/api/profileCache.ts'
 
 const root = `/tmp/cpe-live-profile-${process.pid}`
 const directory = 'build/openwrt-status-package/files/usr/libexec'
@@ -18,6 +19,7 @@ const commands = [profileFixture(root), 'set -eu', `mkdir -p ${root}/cache`, `cp
   `echo '>>> network-before'; uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum`,
   `echo '>>> snapshot'; ${root}/cpe-status-snapshot --refresh`,
   `echo '>>> cached'; ${root}/cpe-status-snapshot`,
+  `echo '>>> profile'; ${root}/cpe-status-snapshot profile`,
   `for name in bands cell-locks operators apn; do`,
   `  ${root}/cpe-status-$name --refresh`,
   `  echo ">>> $name"`,
@@ -31,6 +33,10 @@ const output = execFileSync('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8'
 await writeFile('build/profile-live/output.txt', output)
 const section = (name: string) => output.split('>>> ' + name + '\n')[1]?.split('>>> ')[0].trim()
 const snapshot = JSON.parse(section('snapshot')!) as StatusSnapshot
+const profile = JSON.parse(section('profile')!) as ProfileReply
+assert.equal(snapshot.adapter, undefined)
+assert.equal(snapshot.profile_key, profile.profile_key)
+snapshot.adapter = profile.data
 assert.equal(snapshot.error, undefined)
 assert.equal(snapshot.adapter?.id, 'quectel-rm500q-gl')
 assert.deepEqual(snapshot.warnings ?? {}, {})

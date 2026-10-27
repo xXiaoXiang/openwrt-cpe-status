@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import assert from 'node:assert/strict'
 import { snapshotRoutes, type StatusSnapshot } from '../shared/status-snapshot.ts'
 import { packageManifest } from '../project.ts'
+import { createProfileCache, type ProfileReply } from '../frontend/src/api/profileCache.ts'
 
 const script = `set -eu
 test ! -e /www/luci-static/resources/openwrt-modem
@@ -16,6 +17,8 @@ echo '>>> profile-hash'
 sha256sum /etc/cpe-status/modem.d/2c7c0800.conf
 echo '>>> snapshot'
 /usr/libexec/cpe-status-snapshot
+echo '>>> profile'
+/usr/libexec/cpe-status-snapshot profile
 echo '>>> config-before'
 tar -xzOf /root/cpe-status-pre-v1.tar.gz etc/cpe-status.json | sha256sum
 echo '>>> config-after'
@@ -27,11 +30,14 @@ echo '>>> done'
 `
 const output = execFileSync('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8',process.env.CPE_ROUTER || 'root@192.168.6.248','sh -s'], { input: script, encoding: 'utf8', timeout: 60000, windowsHide: true })
 const section = (name: string) => output.split('>>> ' + name + '\n')[1]?.split('>>> ')[0].trim()
-let snapshot = JSON.parse(section('snapshot')!) as StatusSnapshot
+const profiles = createProfileCache()
+const loadProfile = async () => JSON.parse(execFileSync('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8',process.env.CPE_ROUTER || 'root@192.168.6.248','/usr/libexec/cpe-status-snapshot profile'], { encoding: 'utf8', timeout: 15000, windowsHide: true })) as ProfileReply
+await profiles.get(async () => JSON.parse(section('profile')!) as ProfileReply)
+let snapshot = await profiles.hydrate(JSON.parse(section('snapshot')!) as StatusSnapshot, loadProfile)
 const requiredRoutes = ['/api/device','/api/network','/api/cells','/api/sim']
 for (let attempt = 0; attempt < 12 && requiredRoutes.some(name => snapshotRoutes(snapshot)[name].status === 'deferred'); attempt++) {
   await new Promise(resolve => setTimeout(resolve, 1000))
-  snapshot = JSON.parse(execFileSync('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8',process.env.CPE_ROUTER || 'root@192.168.6.248','/usr/libexec/cpe-status-snapshot'], { encoding: 'utf8', timeout: 15000, windowsHide: true })) as StatusSnapshot
+  snapshot = await profiles.hydrate(JSON.parse(execFileSync('ssh', ['-o','BatchMode=yes','-o','ConnectTimeout=8',process.env.CPE_ROUTER || 'root@192.168.6.248','/usr/libexec/cpe-status-snapshot'], { encoding: 'utf8', timeout: 15000, windowsHide: true })) as StatusSnapshot, loadProfile)
 }
 assert.equal(snapshot.error, undefined)
 assert.equal(snapshot.adapter?.id, 'quectel-rm500q-gl')

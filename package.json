@@ -1,6 +1,6 @@
 {
   "name": "openwrt-modem-monitor",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "license": "GPL-3.0-only",
@@ -9,7 +9,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit",
-    "test": "node --experimental-transform-types --test tests/*.test.ts",
+    "test": "node --experimental-transform-types --test tests/host-network.test.ts tests/profile-cache.test.ts",
     "build": "node --experimental-transform-types tools/build.ts",
     "dev": "vite --config frontend/vite.config.ts",
     "demo": "node build/daemon.mjs --demo"

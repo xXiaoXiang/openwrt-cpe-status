@@ -146,20 +146,20 @@ export function useDashboardData(refreshInterval: number, refreshKey: number, da
     await Promise.allSettled([
       fetchInto('device', '设备信息', () => api.getDeviceInfo(), applyControl(setDeviceInfo)),
       fetchInto('network', '网络信息', () => api.getNetworkInfo(), applyControl((network) => setNetworkInfo((previous) => mergeNetworkInfo(previous, network)))),
-      pendingControlRef.current ? Promise.resolve() : fetchInto('airplane', '飞行模式状态', () => api.getAirplaneMode(), applyControl(setAirplaneMode)),
+      pendingControlRef.current ? Promise.resolve() : fetchInto('airplane', '飞行模式状态', () => api.getAirplaneMode(), applyControl(setAirplaneMode), undefined, () => setAirplaneMode(null)),
       fetchInto('ims', 'IMS 状态', () => api.getImsStatus(), applyControl(setImsStatus)),
-      pendingControlRef.current ? Promise.resolve() : fetchInto('roaming', '漫游状态', () => api.getRoamingStatus(), applyControl(setRoaming)),
+      pendingControlRef.current ? Promise.resolve() : fetchInto('roaming', '漫游状态', () => api.getRoamingStatus(), applyControl(setRoaming), undefined, () => setRoaming(null)),
       // The layout owns this shared state. Only the five header property reads
       // continue on other routes; dashboard diagnostics retain their old scope.
       ...(dashboardActive ? [
-        fetchInto('sim', 'SIM 信息', () => api.getSimInfo(), setSimInfo),
+        fetchInto('sim', 'SIM 信息', () => api.getSimInfo(), setSimInfo, undefined, () => setSimInfo(null)),
         fetchInto('stats', '系统状态', () => api.getSystemStats(), (stats) => {
           setSystemStats(stats)
           updateSpeedHistory(stats)
         }),
         pendingControlRef.current ? Promise.resolve() : fetchInto('data', '数据连接状态', () => api.getDataStatus(), applyControl((status) => setDataStatus(status.active))),
-        fetchInto('cells', '小区信息', () => api.getCellsInfo(), applyControl(setCellsInfo)),
-        fetchInto('qos', 'QoS 信息', () => api.getQosInfo(), setQosInfo, () => setQosInfo(null)),
+        fetchInto('cells', '小区信息', () => api.getCellsInfo(), applyControl(setCellsInfo), undefined, () => setCellsInfo(null)),
+        fetchInto('qos', 'QoS 信息', () => api.getQosInfo(), setQosInfo, undefined, () => setQosInfo(null)),
       ] : []),
     ])
   }, [dashboardActive, fetchInto, updateSpeedHistory])

@@ -52,7 +52,9 @@ let kind=ARGV[0], args=slice(ARGV,1);
 writefile(dir+'/host-commands',(readfile(dir+'/host-commands')||'')+kind+' '+join(' ',args)+'\n');
 function store() {writefile(path,sprintf('%J',state));}
 function dial() {
-  state.up=true;
+  if(!state.qosPrepared) die('Dial started before QoS listener preparation');
+  state.qosPrepared=false;
+  state.up=!readfile(dir+'/no-ip');
   state.mode='AUTO'; // Reproduce the real RM500Q network-register reset.
   for(let mode,value in __QMI_MODES__) if(value==state.loadedModes) state.mode=mode;
   store();
@@ -68,7 +70,11 @@ if(kind=='uci') {
     if(readfile(dir+'/reject-uci')) exit(1);
     state.uciModes=substr(args[1],length('network.wwan.modes='));store();
   } else if(args[0]!='commit' || args[1]!='network') exit(1);
-} else if(kind=='ifup') {state.loadedModes=state.uciModes;dial();}
+} else if(kind=='qos' && args[0]=='prepare') { state.qosPrepared=true; store(); print('{"status":"ok"}\n'); }
+else if(kind=='ifup') {
+  if(readfile(dir+'/no-ip')) system('sleep 3');
+  state.loadedModes=state.uciModes;dial();
+}
 else if(kind=='ip') {if(state.up) print('9: wwan0 inet 192.0.2.2/26 scope global wwan0\n');}
 else if(kind=='ubus') {
   if(args[3]=='dump') print(sprintf('%J',{interface:[{interface:'wwan',proto:'qmi',up:state.up,pending:false,l3_device:'wwan0'},{interface:'wwan_4',up:state.up,'ipv4-address':state.up?[{address:'192.0.2.2'}]:[]}]}));
@@ -87,15 +93,17 @@ const script = [profileFixture(root),
   `chmod 700 ${root}/scan-at ${root}/scan-result ${root}/operators`,
   `printf '#!/bin/sh\nif test -n \"$CPE_OPERATOR_COMMAND\"; then exec sms_tool -d /dev/ttyUSB2 at \"$CPE_OPERATOR_COMMAND\"; fi\nexec ${root}/scan-at\n' >${root}/bin/gcom`,
   `chmod 700 ${root}/bin/gcom`,
-  ...['uci','ubus','ifup','ip'].flatMap(name => [`printf '#!/bin/sh\nexec ${root}/host ${name} "$@"\n' >${root}/bin/${name}`, `chmod 700 ${root}/bin/${name}`]),
+  ...['uci','ubus','ifup','ip','qos'].flatMap(name => [`printf '#!/bin/sh\nexec ${root}/host ${name} "$@"\n' >${root}/bin/${name}`, `chmod 700 ${root}/bin/${name}`]),
   `printf '%s' '{"mode":"AUTO","up":true,"lte":"2,1400,366,1400,367","nr":"0"}' > ${root}/state.json`,
   `printf '%s' '{"device":"/dev/ttyUSB2","networkInterface":"wwan"}' > ${root}/config.json`,
   `export CPE_STATUS_CACHE=${root}/cache CPE_STATUS_CONFIG=${root}/config.json CPE_STATUS_CELL_SCRIPT=${root}/locks CPE_STATUS_CONTROL_SCRIPT=${root}/control CPE_RADIO_TEST_DIR=${root}`,
   `export PATH=${root}/bin:"$PATH"`,
   `export CPE_STATUS_SCAN_AT_SCRIPT=${root}/scan-at CPE_STATUS_OPERATOR_AT_SCRIPT=${root}/operator-shell CPE_STATUS_OPERATOR_SCRIPT=${root}/operators`,
+  `export CPE_STATUS_QOS_SCRIPT=${root}/bin/qos`,
   String.raw`
 run() {
   echo ">>> $1"; shift
+  ucode -e 'import {readfile,writefile} from "fs"; let path=getenv("CPE_RADIO_TEST_DIR")+"/state.json", state=json(readfile(path)); state.qosPrepared=false; writefile(path,sprintf("%J",state));'
   "$CPE_STATUS_CONTROL_SCRIPT" "$@" > "$CPE_RADIO_TEST_DIR/start.json"
   id=$(ucode -e 'import {readfile} from "fs"; print(json(readfile(getenv("CPE_RADIO_TEST_DIR")+"/start.json")).job_id || "");')
   if test -z "$id"; then cat "$CPE_RADIO_TEST_DIR/start.json"; return; fi
@@ -103,7 +111,13 @@ run() {
   while test "$i" -lt 65; do
     "$CPE_RADIO_TEST_DIR/result" "$id" > "$CPE_RADIO_TEST_DIR/result.json"
     pending=$(ucode -e 'import {readfile} from "fs"; print(json(readfile(getenv("CPE_RADIO_TEST_DIR")+"/result.json")).status=="pending" ? "yes":"no");')
-    if test "$pending" != yes; then cat "$CPE_RADIO_TEST_DIR/result.json"; return; fi
+    if test "$pending" != yes; then
+      cat "$CPE_RADIO_TEST_DIR/result.json"
+      # Mode success is published before the bounded background reload finishes.
+      # Let that submission finish before starting the next isolated test case.
+      while test -d "$CPE_STATUS_CACHE/lock"; do sleep 1; done
+      return
+    fi
     sleep 1; i=$((i+1))
   done
   cat "$CPE_STATUS_CACHE/control-worker.log"; exit 1
@@ -115,8 +129,13 @@ echo '>>> cached'
 "$CPE_STATUS_CELL_SCRIPT"
 cp "$CPE_RADIO_TEST_DIR/commands" "$CPE_RADIO_TEST_DIR/cache-commands"
 echo yes > "$CPE_RADIO_TEST_DIR/delay"
+echo yes > "$CPE_RADIO_TEST_DIR/no-ip"
 run mode-delayed mode LTE:NR5G
-rm "$CPE_RADIO_TEST_DIR/delay"
+echo '>>> mode-background-reload'; cat "$CPE_STATUS_CACHE/mode-reconnect.json"; echo
+echo '>>> mode-no-address'; cat "$CPE_RADIO_TEST_DIR/state.json"; echo
+rm "$CPE_RADIO_TEST_DIR/delay" "$CPE_RADIO_TEST_DIR/no-ip"
+# Simulate netifd eventually obtaining IP, without another AT or control request.
+ucode -e 'import {readfile,writefile} from "fs"; let path=getenv("CPE_RADIO_TEST_DIR")+"/state.json", state=json(readfile(path)); state.up=true; writefile(path,sprintf("%J",state));'
 echo yes > "$CPE_RADIO_TEST_DIR/reject-mode"
 run mode-rejected mode NR5G
 rm "$CPE_RADIO_TEST_DIR/reject-mode"
@@ -167,7 +186,7 @@ echo '>>> commands'; cat "$CPE_RADIO_TEST_DIR/commands"
 echo '>>> done'
 `,
 ].join('\n')
-const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', 'root@192.168.6.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
+const child = spawn('ssh', ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts', process.env.CPE_ROUTER || 'root@192.168.2.248', 'sh -s'], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] })
 child.stdin.end(script + '\n')
 let stdout = '', stderr = ''
 child.stdout.on('data', part => { stdout += part.toString() }); child.stderr.on('data', part => { stderr += part.toString() })
@@ -181,7 +200,12 @@ assert.deepEqual(results.initial, results.cached)
 assert.equal(results.initial.data.lte.count, 2)
 assert.equal(results['mode-delayed'].status, 'ok')
 assert.deepEqual(results['mode-delayed'].data, { mode: 'LTE:NR5G' })
+assert.equal(results['mode-delayed'].message, 'OK')
 assert.ok(results['mode-delayed'].finished - results['mode-delayed'].started >= 2)
+assert.equal(results['mode-background-reload'].status, 'submitted')
+assert.ok(results['mode-background-reload'].finished - results['mode-delayed'].finished >= 3, 'confirmed mode returns before even the slow ifup submission finishes')
+assert.equal(results['mode-no-address'].up, false, 'mode success must not wait for IP acquisition')
+assert.ok(results['mode-delayed'].finished - results['mode-delayed'].started < 15, 'no wait for the 60-second data connection deadline')
 assert.equal(results['mode-rejected'].status, 'error'); assert.match(results['mode-rejected'].message, /CME ERROR: 4/)
 assert.equal(results['mode-rejected'].data.mode, 'LTE:NR5G')
 assert.equal(results['lock-lte'].data.lte.count, 1); assert.equal(results['unlock-lte'].data.lte.count, 0)

@@ -1,4 +1,4 @@
-import type { ModemProfile } from '../../../shared/modem-profile.ts'
+import { modemProfiles, type ProfileReply } from './profileCache.ts'
 import { validateApnSettings, type ApnSettings } from '../../../shared/apn-settings.ts'
 import { snapshotRoutes, type StatusSnapshot } from '../../../shared/status-snapshot.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
@@ -6,6 +6,7 @@ import { snapshotCapabilities } from '../../../shared/roaming.ts'
 import { bandGroups, normalizeBands, type BandState } from '../../../shared/bands.ts'
 import { cellLockParams, lockMatches, networkModes, type CellLockRequest, type CellLockState } from '../../../shared/radio-settings.ts'
 import { joinSmsSegments, type ArchivedSms } from '../../../shared/sms-history.ts'
+import { featureEnabled, operationSupported, unsupportedResult } from '../../../shared/availability.ts'
 
 const unsupported: ApiResponse = { status: 'unsupported', message: '此状态插件未启用该操作' }
 let interval = Number(localStorage.getItem('cpe-status-refresh') ?? 2000)
@@ -15,18 +16,25 @@ let pending: Promise<StatusSnapshot> | undefined
 let revision = 0
 let writing = false
 let canWrite: boolean | undefined
-let selectedProfile: ModemProfile | undefined
 let localRead: Promise<{ speed?: { wall_time: number; time: number; previous_time: number; counters: StatusSnapshot['host']['counters']; previous_counters: StatusSnapshot['host']['counters'] }; wwan?: { status: string; message: string; carrier?: string; apn?: string } }> | undefined
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })
 export async function statusLiteFetch(path: string, init: RequestInit | undefined, rpc: (object: string, method: string, args: object) => Promise<unknown>) {
+  const loadProfile = async (): Promise<ProfileReply> => {
+    const file = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: ['profile'] }) as { code?: number; stdout?: string }
+    if (file.code !== 0 || !file.stdout) throw new Error('模块适配规则读取失败')
+    return JSON.parse(file.stdout)
+  }
+  const hydrate = (snapshot: StatusSnapshot) => modemProfiles.hydrate(snapshot, loadProfile)
+  if (path === '/api/qos' && (init?.method ?? 'GET') === 'GET') {
+    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-qos-read', params: [] }) as { code?: number; stdout?: string }
+    return response(result.code === 0 && result.stdout ? JSON.parse(result.stdout) : unsupported)
+  }
   if (path === '/api/adaptation') {
     try { canWrite = (await rpc('session', 'access', { scope: 'access-group', object: 'luci-app-cpe-status', function: 'write' }) as { access?: boolean }).access === true } catch { canWrite = false }
-    const file = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: ['profile'] }) as { code?: number; stdout?: string }
-    const info = file.code === 0 && file.stdout ? JSON.parse(file.stdout) : {}
-    const profile = info.data as ModemProfile | undefined
+    const info = await modemProfiles.get(loadProfile)
+    const profile = info.data
     const valid = profile?.schemaVersion === 1
-    selectedProfile = profile
-    return response({ status: 'ok', data: { ...snapshotCapabilities, id: profile?.id ?? 'unknown-modem', writes_enabled: canWrite && valid, data_control: valid, airplane_control: !!profile?.commands.airplaneSet, roaming_policy: !!profile?.commands.roamingSet, modem_profile: profile } })
+    return response({ status: 'ok', data: { ...snapshotCapabilities, id: profile?.id ?? 'unknown-modem', writes_enabled: canWrite && valid, data_control: featureEnabled(profile, 'dataControl') && operationSupported(profile, 'radio'), airplane_control: operationSupported(profile, 'radio') && operationSupported(profile, 'airplaneSet'), roaming_policy: operationSupported(profile, 'roamingPreference') && operationSupported(profile, 'roamingSet'), modem_profile: profile } })
   }
   const local = async () => {
     if (!localRead) localRead = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-speed-settings', params: ['read'] }).then(result => {
@@ -112,6 +120,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     return response(JSON.parse(result.stdout))
   }
   if (['/api/data', '/api/airplane-mode', '/api/band-lock', '/api/network-mode', '/api/cell-lock', '/api/apn'].includes(path) && init?.method?.toUpperCase() === 'POST') {
+    const selectedProfile = modemProfiles.peek()
     if (canWrite !== true) return response({ status: 'error', message: '当前 LuCI 会话没有 Modem 控制权限' })
     const kind = path === '/api/apn' ? 'apn' : path === '/api/cell-lock' ? 'cell' : path === '/api/network-mode' ? 'mode' : path === '/api/band-lock' ? 'bands' : path === '/api/data' ? 'data' : 'airplane'
     const body = JSON.parse(String(init.body ?? '{}')) as Record<string, unknown>
@@ -124,9 +133,14 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
         if (!networkModes.some(mode => mode.value === body.mode)) throw new Error('无效的网络模式')
         params = ['mode', String(body.mode)]
       } else if (kind === 'cell') params = cellLockParams(body as unknown as CellLockRequest, selectedProfile)
-      else params = kind === 'bands' ? ['bands', ...bandGroups.map(group => normalizeBands(body[group.key]).join(':'))] : [kind, target ? '1' : '0']
+      else params = kind === 'bands' ? ['bands', ...bandGroups.map(group => {
+        const available = operationSupported(selectedProfile, 'bandCapabilities') && operationSupported(selectedProfile, selectedProfile?.bandOperations[group.key]?.read || '')
+        if (!available && Array.isArray(body[group.key]) && !(body[group.key] as unknown[]).length) return ''
+        if (!available) throw new Error(`Unsupported: ${group.key} bands`)
+        return normalizeBands(body[group.key]).join(':')
+      })] : [kind, target ? '1' : '0']
     }
-    catch (error) { return response({ status: 'error', message: String(error) }) }
+    catch (error) { return response(String(error).includes('Unsupported:') ? unsupportedResult(String(error)) : { status: 'error', message: String(error) }) }
     if (writing) return response({ status: 'deferred', message: '已有 Modem 设置正在执行', submitted: false })
     writing = true; revision++
     const execute = async (command: string, params: string[]) => {
@@ -143,19 +157,19 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
         await new Promise(resolve => setTimeout(resolve, 1000))
         result = await execute('/usr/libexec/cpe-status-control-result', [job])
       } while (result.status === 'pending' && Date.now() < deadline)
-      if (result.snapshot && result.snapshot.device === cache?.data.device) cache = { time: 0, data: result.snapshot }
+      if (result.snapshot && result.snapshot.device === cache?.data.device) cache = { time: 0, data: await hydrate(result.snapshot) }
       else if (cache) cache.time = 0
       if (result.status === 'pending') return response({ status: 'deferred', message: '设置已提交，尚未确认最终状态，请稍后刷新' })
       if (result.status === 'ok') {
         const bands = result.data as unknown as BandState | undefined
         const matches = kind === 'apn' ? JSON.stringify(result.data?.settings) === JSON.stringify(validateApnSettings(body as unknown as ApnSettings)) : kind === 'mode' ? result.data?.mode === body.mode
           : kind === 'cell' ? lockMatches(result.data as unknown as CellLockState, body as unknown as CellLockRequest)
-          : kind === 'bands' ? bandGroups.every(group => bands?.enabled?.[group.key]?.join(':') === normalizeBands(body[group.key]).join(':'))
+          : kind === 'bands' ? bandGroups.every(group => bands?.enabled?.[group.key]?.join(':') === (Array.isArray(body[group.key]) && !(body[group.key] as unknown[]).length ? '' : normalizeBands(body[group.key]).join(':')))
           : kind === 'data' ? result.data?.active === target
           : result.data?.enabled === target && result.data?.online === !target
         if (!matches) throw new Error('Modem 返回的确认状态与请求不符')
       }
-      return response({ status: result.status, message: result.message, data: result.data })
+      return response({ status: result.status, message: result.message, data: result.data, ...(result.status === 'unsupported' ? { display: '-' } : {}) })
     } finally { writing = false; revision++ }
   }
   if (path === '/api/roaming' && init?.method?.toUpperCase() === 'POST') {
@@ -182,15 +196,15 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
       return response({ status: 'ok', message: confirmed.message, data: { ...previous, ...confirmed.data } })
     } finally { writing = false; revision++ }
   }
-  if ((init?.method ?? 'GET') !== 'GET' || ['/api/qos', '/api/ims/status', '/api/connectivity'].includes(path)) return response(unsupported)
+  if ((init?.method ?? 'GET') !== 'GET' || ['/api/ims/status', '/api/connectivity'].includes(path)) return response(unsupported)
   if (!['/api/device', '/api/network', '/api/network-mode', '/api/cells', '/api/airplane-mode', '/api/roaming', '/api/sim', '/api/data', '/api/stats'].includes(path)) return response(unsupported)
   if (!writing && (!cache || Date.now() - cache.time >= 450)) {
     if (!pending) {
       const readRevision = revision
-      pending = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: [] }).then(value => {
+      pending = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: [] }).then(async value => {
       const result = value as { code?: number; stdout?: string; stderr?: string }
       if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '采集脚本没有返回数据')
-      const snapshot = JSON.parse(result.stdout) as StatusSnapshot
+      const snapshot = await hydrate(JSON.parse(result.stdout) as StatusSnapshot)
       if (!snapshot.error && readRevision === revision) cache = { time: Date.now(), data: snapshot }
       return snapshot
       }).finally(() => { pending = undefined })

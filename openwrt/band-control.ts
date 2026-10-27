@@ -3,7 +3,8 @@ import { statusRuntime } from './status-collector.ts'
 // Commands and semantics checked against obsy/modemband _quectel_common2.
 // Discover supported bands from the modem instead of a static model template.
 export const bandRuntime = String.raw`
-const bandNames = profile?.bandOperations || {};
+const bandNames = {};
+for (let key, entry in profile?.bandOperations || {}) if (profileHas(entry.read) && profileHas('bandCapabilities')) bandNames[key] = entry;
 function bandList(value) {
   if (type(value) != 'string' || !match(value, /^[1-9][0-9]*(:[1-9][0-9]*)*$/) || length(value) > 640) die('Invalid band list');
   let bands = [];
@@ -16,16 +17,17 @@ function bandList(value) {
   return sort(bands, (a, b) => a - b);
 }
 function parseBandReply(raw, capability) {
-  let result = {};
+  let result = { lte: [], sa: [], nsa: [] }, seen = {};
   if (match(raw, /(^|\n)(ERROR|\+CME ERROR:)/)) die('模块拒绝频段查询');
   let records = [];
   if (capability) records = profileParse('bandCapabilities', raw);
   else for (let entry in values(bandNames)) for (let row in profileParse(entry.read, raw)) push(records, row);
   for (let row in records) if (row.rat in bandNames) {
-    if (result[row.rat]) die('频段查询返回重复结果');
+    if (seen[row.rat]) die('频段查询返回重复结果');
+    seen[row.rat] = true;
     result[row.rat] = bandList(row.bands);
   }
-  for (let key in keys(bandNames)) if (!result[key]) die('模块未返回完整频段');
+  for (let key in keys(bandNames)) if (!seen[key]) die('模块未返回完整频段');
   return result;
 }
 function bandAt(cmd) { return bounded('sms_tool -d ' + port + ' at ' + "'" + cmd + "'", 5); }
@@ -38,7 +40,9 @@ function readBands() {
     save(directory + '/band-capabilities.json', capabilities);
   }
   let raw = bandAt(profileBatch(map(values(bandNames), entry => entry.read)));
-  let result = { device: port, model: capabilities.model, supported: capabilities.supported, enabled: parseBandReply(raw), sampled_at: time() };
+  let unavailable = {};
+  for (let key in ['lte', 'sa', 'nsa']) if (!bandNames[key]) unavailable[key] = '-';
+  let result = { device: port, model: capabilities.model, supported: capabilities.supported, enabled: parseBandReply(raw), unavailable, sampled_at: time() };
   save(directory + '/bands.json', result);
   return result;
 }
@@ -47,6 +51,7 @@ function readBands() {
 export const bandReader = statusRuntime + bandRuntime + String.raw`
 function reply(value) { print(sprintf('%J\n', value)); }
 mkdir(directory, 0700);
+if (profile && !length(keys(bandNames))) { reply(profileUnsupported('bandCapabilities')); exit(0); }
 const bandScript = getenv('CPE_STATUS_BAND_SCRIPT') || '/usr/libexec/cpe-status-bands';
 if (!match(bandScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid band executable');
 if (length(ARGV) > 1 || (length(ARGV) && ARGV[0] != '--refresh')) die('Invalid band read arguments');

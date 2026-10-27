@@ -8,6 +8,7 @@ import { OpenWrtHost } from './host.ts'
 import { ModemService } from './service.ts'
 import { exampleConfig, type ServiceConfig } from './config.ts'
 import { DemoHost, DemoTransport } from './demo.ts'
+import { unsupportedResult } from '../shared/availability.ts'
 
 const args = process.argv.slice(2), demo = args.includes('--demo')
 const option = (name: string, fallback: string) => { const index = args.indexOf(name); return index >= 0 ? args[index + 1] ?? fallback : fallback }
@@ -51,7 +52,7 @@ const server = createServer(async (request, response) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     response.setHeader('Content-Type', 'application/json')
-    response.end(JSON.stringify({ status: message.startsWith('Unsupported:') ? 'unsupported' : /ModemReadDeferred|State changed during read/.test(message) ? 'deferred' : 'error', message, ...(/ModemReadDeferred/.test(message) ? { retry_after_ms: 30_000 } : {}) }))
+    response.end(JSON.stringify(message.startsWith('Unsupported:') ? unsupportedResult(message.slice(12).trim()) : { status: /ModemReadDeferred|State changed during read/.test(message) ? 'deferred' : 'error', message, ...(/ModemReadDeferred/.test(message) ? { retry_after_ms: 30_000 } : {}) }))
   }
 })
 server.requestTimeout = 200_000

@@ -6,9 +6,14 @@ import { useCapabilities } from '../contexts/CapabilitiesContext'
 import { bandGroups, type BandState, type BandSelection } from '../../../shared/bands.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import CellLockPanel from '../components/CellLockPanel'
+import { operationSupported } from '../../../shared/availability.ts'
 
 export default function Bands() {
   const capabilities = useCapabilities()
+  const profile = capabilities?.modem_profile
+  const readableGroup = (key: string) => !profile || (operationSupported(profile, 'bandCapabilities') && operationSupported(profile, profile.bandOperations[key]?.read || ''))
+  const writableGroup = (key: string) => readableGroup(key) && (!profile || operationSupported(profile, profile.bandOperations[key]?.write || ''))
+  const [unavailable, setUnavailable] = useState(false)
   const [state, setState] = useState<BandState>()
   const [draft, setDraft] = useState<BandSelection>()
   const [busy, setBusy] = useState(false)
@@ -34,6 +39,7 @@ export default function Bands() {
       for (let attempt = 0; attempt < 15 && mounted.current; attempt++) {
       const result = await request<ApiResponse<BandState>>('/band-lock')
       if (!mounted.current || started !== revision.current) return
+      if (result.status === 'unsupported') { setUnavailable(true); setNotice(undefined); break }
       if (result.data) {
         setState(result.data)
         // A manual read must not erase unsaved choices.
@@ -54,11 +60,12 @@ export default function Bands() {
     return () => { mounted.current = false }
   }, [read])
 
-  const changed = !!draft && !!state && bandGroups.some(group => draft[group.key].join(':') !== state.enabled[group.key].join(':'))
-  const valid = !!draft && !!state && bandGroups.every(group => draft[group.key].length > 0 && draft[group.key].every(band => state.supported[group.key].includes(band)))
+  const changed = !!draft && !!state && bandGroups.some(group => writableGroup(group.key) && draft[group.key].join(':') !== state.enabled[group.key].join(':'))
+  const valid = !!draft && !!state && bandGroups.every(group => !writableGroup(group.key) || (draft[group.key].length > 0 && draft[group.key].every(band => state.supported[group.key].includes(band))))
   const apply = async () => {
     if (!draft || !writable || busy) return
     const selected = structuredClone(draft)
+    for (const group of bandGroups) if (!readableGroup(group.key)) selected[group.key] = []
     setConfirm(false); setBusy(true); writing.current = true; revision.current++; setNotice(undefined)
     try {
       const result = await request<ApiResponse<BandState>>('/band-lock', { method: 'POST', body: JSON.stringify(selected) })
@@ -78,22 +85,22 @@ export default function Bands() {
     <Typography variant="body2" color="text.secondary">选择模块允许使用的频段，可多选。选择全部表示取消该组频段限制。</Typography>
     {notice && <Alert severity={notice.severity}>{notice.text}</Alert>}
     {!writable && capabilities && <Alert severity="info">当前 LuCI 会话为只读，无法修改频段。</Alert>}
-    {!state && <Box py={3} textAlign="center">{reading && <CircularProgress size={24} />}<Typography>等待读取模块频段</Typography></Box>}
-    {state && draft && bandGroups.map(group => <Paper key={group.key} sx={{ p: 2 }} variant="outlined" data-band-group={group.key}>
+    {!state && !unavailable && <Box py={3} textAlign="center">{reading && <CircularProgress size={24} />}<Typography>等待读取模块频段</Typography></Box>}
+    {(state && draft || unavailable) && bandGroups.map(group => !readableGroup(group.key) || !state || !draft ? <Paper key={group.key} sx={{ p: 2 }} variant="outlined" data-band-group={group.key}><Typography fontWeight={600}>{group.label}</Typography><Typography color="text.secondary">-</Typography></Paper> : <Paper key={group.key} sx={{ p: 2 }} variant="outlined" data-band-group={group.key}>
       <Box display="flex" alignItems="center" gap={1} flexWrap="wrap" mb={1}>
         <Typography fontWeight={600} sx={{ flex: { xs: '1 0 100%', sm: 1 } }}>{group.label}</Typography>
         <Typography variant="caption" color="text.secondary">已选 {draft[group.key].length} / {state.supported[group.key].length}</Typography>
-        <Button size="small" disabled={!writable || busy} onClick={() => { editing.current = true; setDraft({ ...draft, [group.key]: [...state.supported[group.key]] }) }}>全选</Button>
-        <Button size="small" disabled={!writable || busy} onClick={() => { editing.current = true; setDraft({ ...draft, [group.key]: [] }) }}>清空</Button>
+        <Button size="small" disabled={!writable || busy || !writableGroup(group.key)} onClick={() => { editing.current = true; setDraft({ ...draft, [group.key]: [...state.supported[group.key]] }) }}>全选</Button>
+        <Button size="small" disabled={!writable || busy || !writableGroup(group.key)} onClick={() => { editing.current = true; setDraft({ ...draft, [group.key]: [] }) }}>清空</Button>
       </Box>
       <Typography variant="caption" color="text.secondary" sx={{ overflowWrap: 'anywhere' }}>模块当前：{state.enabled[group.key].map(band => group.prefix + band).join(' · ')}</Typography>
       <Box display="grid" gridTemplateColumns="repeat(auto-fill, minmax(82px, 1fr))" gap={0.25} mt={1}>
-        {[...new Set([...state.supported[group.key], ...state.enabled[group.key]])].sort((a, b) => a - b).map(band => <FormControlLabel key={band} sx={{ m: 0 }} label={group.prefix + band} control={<Checkbox size="small" checked={draft[group.key].includes(band)} disabled={!writable || busy || !state.supported[group.key].includes(band)} onChange={(_, checked) => {
+        {[...new Set([...state.supported[group.key], ...state.enabled[group.key]])].sort((a, b) => a - b).map(band => <FormControlLabel key={band} sx={{ m: 0 }} label={group.prefix + band} control={<Checkbox size="small" checked={draft[group.key].includes(band)} disabled={!writable || busy || !writableGroup(group.key) || !state.supported[group.key].includes(band)} onChange={(_, checked) => {
           editing.current = true
           setDraft({ ...draft, [group.key]: (checked ? [...draft[group.key], band] : draft[group.key].filter(value => value !== band)).sort((a, b) => a - b) })
         }} />} />)}
       </Box>
-      {!draft[group.key].length && <Typography color="error" variant="caption">至少保留一个频段</Typography>}
+      {writableGroup(group.key) && !draft[group.key].length && <Typography color="error" variant="caption">至少保留一个频段</Typography>}
     </Paper>)}
     {state && <Box display="flex" gap={1} flexWrap="wrap" alignItems="center">
       <Button variant="contained" disabled={!writable || busy || cellBusy || !changed || !valid || !!state.stale} onClick={() => setConfirm(true)} startIcon={busy ? <CircularProgress size={16} color="inherit" /> : undefined}>应用频段设置</Button>

@@ -2,7 +2,7 @@ import type { Scalar } from './adapter.ts'
 
 export interface OperatorNetwork { plmn: string; names: string[]; technologies: string[]; status: number }
 export interface OperatorState { mode: number; operator: string; plmn: string; registered: boolean; registration: number | null; sampled_at: number }
-export interface OperatorResult { status: 'ok' | 'error' | 'deferred'; message?: string; busy?: boolean; refreshing?: boolean; job_id?: string; state?: OperatorState; data?: { raw: string; records?: Record<string, Scalar>[]; sampled_at: number } }
+export interface OperatorResult { status: 'ok' | 'error' | 'deferred' | 'unsupported'; message?: string; busy?: boolean; refreshing?: boolean; job_id?: string; state?: OperatorState; data?: { raw: string; records?: Record<string, Scalar>[]; sampled_at: number } }
 export function parseOperators(raw: string, records?: Record<string, Scalar>[]): OperatorNetwork[] {
   if (!/^\s*OK\s*$/m.test(raw) || /^\s*(ERROR|\+CME ERROR:)/m.test(raw)) throw new Error('运营商扫描未完整结束')
   const found = new Map<string, OperatorNetwork>()

@@ -11,6 +11,7 @@ export interface BandState {
   enabled: BandSelection
   sampled_at: number
   stale?: boolean
+  unavailable?: Partial<Record<BandKey, string>>
 }
 export function normalizeBands(value: unknown): number[] {
   if (!Array.isArray(value) || !value.length || value.length > 128

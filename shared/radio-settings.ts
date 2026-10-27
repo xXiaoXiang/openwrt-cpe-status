@@ -2,11 +2,11 @@ import type { ModemProfile } from './modem-profile.ts'
 import { renderCommand } from '../backend/parser.ts'
 
 export const networkModes = [
-  { value: 'AUTO', label: '自动（3G / LTE / 5G）' },
-  { value: 'LTE:NR5G', label: 'LTE & 5G NR' },
+  { value: 'AUTO', label: '自动（3G/LTE/5G）' },
+  { value: 'LTE:NR5G', label: 'LTE/5G NR' },
   { value: 'LTE', label: 'LTE Only（仅 4G）' },
   { value: 'NR5G', label: '5G Only（仅 SA）' },
-  { value: 'WCDMA:LTE', label: '3G & LTE' },
+  { value: 'WCDMA:LTE', label: '3G/LTE' },
   { value: 'WCDMA', label: '3G Only（WCDMA）' },
 ] as const
 // netifd qmi.sh applies this after network-register, which otherwise resets
@@ -16,7 +16,7 @@ export const qmiNetworkModes = {
   'WCDMA:LTE': 'umts,lte', WCDMA: 'umts',
 } as const
 export interface CellTarget { rat: 'lte' | 'nr'; arfcn: number; pci: number; band?: number; scs_khz?: number }
-export interface LockResult { status: 'ok' | 'error'; count?: number; cells: CellTarget[]; raw: string; message?: string; previous?: LockResult }
+export interface LockResult { status: 'ok' | 'error' | 'unsupported'; count?: number; cells: CellTarget[]; raw: string; message?: string; display?: string; previous?: LockResult }
 export interface CellLockState { lte: LockResult; nr: LockResult; sampled_at: number; stale?: boolean }
 export interface CellLockRequest { action: 'lock' | 'unlock'; rat: 'lte' | 'nr'; cell?: CellTarget }
 const integer = (value: unknown, min: number, max: number) => typeof value === 'number' && Number.isInteger(value) && value >= min && value <= max

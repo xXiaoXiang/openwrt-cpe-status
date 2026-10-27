@@ -1,4 +1,5 @@
 import { parseReply, renderCommand } from '../../../backend/parser.ts'
+import { operationSupported } from '../../../shared/availability.ts'
 /*
  * @Author: 1orz cloudorzi@gmail.com
  * @Date: 2025-12-03 13:58:02
@@ -56,8 +57,9 @@ const QUICK_COMMANDS = [
 export default function ATConsolePage() {
   const capability = useCapabilities()
   const profile = capability?.modem_profile
-  const imeiDefinition = profile?.commands[profile.console.imeiRead]
-  const quickCommands = profile ? profile.console.shortcuts.flatMap(item => profile.commands[item.operation] ? [{ label: item.label, cmd: renderCommand(profile.commands[item.operation]), desc: item.desc }] : []) : capability?.status_only ? [] : QUICK_COMMANDS
+  const imeiDefinition = profile && operationSupported(profile, profile.console.imeiRead) ? profile.commands[profile.console.imeiRead] : undefined
+  const imeiWritable = !profile || operationSupported(profile, profile.console.imeiWrite)
+  const quickCommands = profile ? profile.console.shortcuts.map(item => ({ label: item.label, cmd: operationSupported(profile, item.operation) ? renderCommand(profile.commands[item.operation]) : '', desc: item.desc })) : capability?.status_only ? [] : QUICK_COMMANDS
   const run = useSingleFlight()
   const [command, setCommand] = useState('')
   const [history, setHistory] = useState<CommandHistory[]>([])
@@ -333,13 +335,13 @@ export default function ATConsolePage() {
           {quickCommands.map((item, idx) => (
             <Tooltip key={idx} title={`${item.cmd} - ${item.desc}`} placement="top">
               <Chip
-                label={item.label}
+                label={item.cmd ? item.label : item.label + ' · -'}
                 onClick={() => handleQuickCommand(item.cmd)}
                 color="primary"
                 variant="outlined"
                 size="small"
                 clickable
-                disabled={loading || !capability?.writes_enabled}
+                disabled={loading || !capability?.writes_enabled || !item.cmd}
               />
             </Tooltip>
           ))}
@@ -385,7 +387,7 @@ export default function ATConsolePage() {
                 color="warning"
                 size="small"
                 onClick={() => void handleSubmitImei()}
-                disabled={loading || imeiLoading || !capability?.writes_enabled || currentImei.length !== 15}
+                disabled={loading || imeiLoading || !capability?.writes_enabled || !imeiWritable || currentImei.length !== 15}
               >
                 {loading ? '...' : '写入'}
               </Button>

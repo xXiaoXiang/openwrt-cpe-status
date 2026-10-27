@@ -78,6 +78,7 @@ export function QuickControls({
             </Box>
             <Box display="flex" alignItems="center" gap={0.5} sx={{ ml: 'auto', flexShrink: 0 }}>
               {progress('data')}
+              {capabilities?.status_only && !capabilities.data_control ? <Typography color="text.secondary">-</Typography> :
               <Switch
                 slotProps={{ input: { 'aria-label': '数据连接' } }}
                 checked={dataStatus ?? false}
@@ -86,6 +87,7 @@ export function QuickControls({
                 size="small"
                 disabled={!capabilities?.data_control || !capabilities?.writes_enabled || dataStatus === null || airplaneMode?.enabled === true || !!pendingControl || !!confirmation}
               />
+              }
             </Box>
           </Box>
 
@@ -100,6 +102,7 @@ export function QuickControls({
             </Box>
             <Box display="flex" alignItems="center" gap={0.5} sx={{ ml: 'auto', flexShrink: 0 }}>
               {progress('roaming')}
+              {capabilities?.status_only && !capabilities.roaming_policy ? <Typography color="text.secondary">-</Typography> :
               <Switch
                 slotProps={{ input: { 'aria-label': roamingLabel } }}
                 checked={roaming?.roaming_allowed ?? false}
@@ -108,6 +111,7 @@ export function QuickControls({
                 size="small"
                 disabled={!capabilities?.roaming_policy || !capabilities?.writes_enabled || typeof roaming?.roaming_allowed !== 'boolean' || !!pendingControl || !!confirmation}
               />
+              }
             </Box>
           </Box>
 
@@ -118,6 +122,7 @@ export function QuickControls({
             </Box>
             <Box display="flex" alignItems="center" gap={0.5} sx={{ ml: 'auto', flexShrink: 0 }}>
               {progress('airplane')}
+              {capabilities?.status_only && !capabilities.airplane_control ? <Typography color="text.secondary">-</Typography> :
               <Switch
                 slotProps={{ input: { 'aria-label': '飞行模式' } }}
                 checked={airplaneMode?.enabled ?? false}
@@ -126,6 +131,7 @@ export function QuickControls({
                 size="small"
                 disabled={!capabilities?.writes_enabled || capabilities?.airplane_control === false || !airplaneMode || !!pendingControl || !!confirmation}
               />
+              }
             </Box>
           </Box>
           <NetworkModeControl />

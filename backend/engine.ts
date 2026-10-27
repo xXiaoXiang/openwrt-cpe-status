@@ -3,6 +3,7 @@ import type { CommandDefinition, ModemAdapter, Reading } from '../shared/adapter
 import { ReadCache } from './cache.ts'
 import { parseReply, renderCommand } from './parser.ts'
 import type { AtTransport } from './transport.ts'
+import { requireOperation } from '../shared/availability.ts'
 
 export class Engine {
   readonly cache = new ReadCache()
@@ -18,6 +19,7 @@ export class Engine {
     try { return await next } finally { this.queued-- }
   }
   definition(name: string): CommandDefinition {
+    requireOperation(this.adapter, name)
     const definition = this.adapter.commands[name]
     if (!definition || (definition.requiresValidation && !this.validated.has(name))) throw new Error(`Unsupported: ${name} is not enabled for this adapter`)
     return definition
@@ -69,12 +71,19 @@ export function validateAdapter(value: unknown): asserts value is ModemAdapter {
   const adapter = value as ModemAdapter
   if (!adapter || adapter.schemaVersion !== 1 || typeof adapter.id !== 'string' || typeof adapter.modelPattern !== 'string' || !adapter.commands || typeof adapter.commands !== 'object') throw new Error('Invalid adapter header')
   new RegExp(adapter.modelPattern)
+  for (const [name, reason] of Object.entries(adapter.unsupportedOperations ?? {})) {
+    if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(name) || typeof reason !== 'string' || !reason.length || reason.length > 512) throw new Error('Invalid unsupported operation declaration')
+  }
   for (const definition of Object.values(adapter.commands)) {
     if (typeof definition.command !== 'string' || !definition.command.startsWith('AT') || /[\r\n\x00-\x1f]/.test(definition.command) || !['read', 'write'].includes(definition.kind) || !Number.isFinite(definition.ttlMs) || definition.ttlMs < 0 || !Number.isFinite(definition.timeoutMs) || definition.timeoutMs <= 0 || definition.timeoutMs > 240_000 || !Array.isArray(definition.rules)) throw new Error('Invalid AT definition')
     for (const rule of definition.rules) {
       if (!['csv', 'captures'].includes(rule.format) || typeof rule.fields !== 'object') throw new Error('Invalid extraction rule')
       new RegExp(rule.regex)
       for (const field of Object.values(rule.fields)) if (!Number.isInteger(field.index) || field.index < 0) throw new Error('Invalid field index')
+    }
+    for (const [key, values] of Object.entries(definition.parameterValues ?? {})) {
+      const pattern = definition.parameters?.[key]
+      if (!pattern || !Array.isArray(values) || !values.length || values.some(value => typeof value !== 'string' || !new RegExp(`^(?:${pattern})$`).test(value))) throw new Error('Invalid supported parameter values')
     }
   }
 }

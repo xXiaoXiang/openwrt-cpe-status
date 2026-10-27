@@ -3,7 +3,7 @@ import type { CellsResponse, CellInfo } from '../frontend/src/api/types.ts'
 
 export interface CellScanReading { raw: string; records?: Record<string, Scalar>[]; sampled_at: number }
 export interface CellScanResponse {
-  status: 'ok' | 'deferred' | 'error'
+  status: 'ok' | 'deferred' | 'error' | 'unsupported'
   message: string
   scanning?: boolean
   job_id?: string

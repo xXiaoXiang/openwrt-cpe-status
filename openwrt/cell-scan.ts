@@ -39,6 +39,7 @@ exit 1
 // Polling this helper only reads files. It never starts or repeats a scan.
 export const cellScanReader = statusRuntime + String.raw`
 if (length(ARGV)) die('Scan result reader accepts no arguments');
+if (profile && !profileHas('cellScan')) { print(sprintf('%J\n', profileUnsupported('cellScan'))); exit(0); }
 let previous = readJSON(directory + '/cell-scan.json');
 if (previous?.device != port) previous = null;
 let active = readJSON(directory + '/scan-active.json');

@@ -7,11 +7,13 @@ import { useCapabilities } from '../contexts/CapabilitiesContext'
 import { useSharedDashboardData } from '../contexts/DashboardDataContext'
 import { getCarrierInfo } from '../utils/carriers'
 import { parseOperators, type OperatorNetwork, type OperatorResult, type OperatorState } from '../../../shared/operators.ts'
+import { operationSupported } from '../../../shared/availability.ts'
 
 type Selection = { action: 'scan' | 'auto' | 'manual'; plmn?: string; name?: string }
 const labels = ['未知', '可用', '当前', '禁止']
 export default function Operators() {
   const capabilities = useCapabilities(), writable = capabilities?.writes_enabled === true
+  const supported = (name: string) => !capabilities?.modem_profile || operationSupported(capabilities.modem_profile, name)
   const { data: dashboard } = useSharedDashboardData()
   const [state, setState] = useState<OperatorState>()
   const [showNetworks, setShowNetworks] = useState(false)
@@ -36,7 +38,7 @@ export default function Operators() {
     try {
       const result = await request<OperatorResult>(currentOnly ? refresh ? '/operators/current' : '/operators/current-result' : refresh ? '/operators/refresh' : '/operators')
       if (revision !== operationRevision.current) return
-      if (currentOnly && mounted.current) setLoadingState(result.refreshing === true || (!result.state && result.status !== 'error'))
+      if (currentOnly && mounted.current) setLoadingState(result.status !== 'unsupported' && (result.refreshing === true || (!result.state && result.status !== 'error')))
       consume(result, currentOnly)
       return result
     } catch (error) { if (mounted.current) setNotice({ severity: 'error', text: String(error) }) }
@@ -49,7 +51,7 @@ export default function Operators() {
     void (async () => {
       for (let i = 0; i < 12 && mounted.current && revision === operationRevision.current; i++) {
         const result = await read(i === 0, true)
-        if (result?.busy || (result?.state && i > 0 && !result.refreshing) || result?.status === 'error') break
+        if (result?.busy || (result?.state && i > 0 && !result.refreshing) || result?.status === 'error' || result?.status === 'unsupported') break
         await new Promise(resolve => setTimeout(resolve, 2000))
       }
       if (mounted.current && revision === operationRevision.current) setLoadingState(false)
@@ -76,7 +78,7 @@ export default function Operators() {
     const before = state?.sampled_at ?? 0
     for (let i = 0; i < 12 && mounted.current; i++) {
       const result = await read(i === 0, true)
-      if (result?.busy || (result?.state && result.state.sampled_at > before) || result?.status === 'error') break
+      if (result?.busy || (result?.state && result.state.sampled_at > before) || result?.status === 'error' || result?.status === 'unsupported') break
       await new Promise(resolve => setTimeout(resolve, 2000))
     }
     if (mounted.current) setLoadingState(false)
@@ -96,14 +98,14 @@ export default function Operators() {
     <Paper variant="outlined" sx={{ p: 2 }}><Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">
       {loadingState ? <CircularProgress size={20} aria-label="读取当前运营商" /> : <>
       <Typography data-current-operator title={plmn}>{state ? operatorName : '—'}</Typography>
-      <Chip data-operator-registration variant="outlined" color={state?.registered ? 'success' : 'default'} label={registrationLabel} />
+      <Chip data-operator-registration variant="outlined" color={state?.registered ? 'success' : 'default'} label={supported('operator') ? registrationLabel : '-'} />
       {state && !state.registered && <Chip label={state.mode === 0 ? '自动选网' : state.mode === 1 ? '手动选网' : `选网模式 ${state.mode}`} />}
       </>}
     </Stack></Paper>
     <ApnSettings />
     <Typography variant="h6">手动选择运营商</Typography>
-    <Box display="flex" gap={1} flexWrap="wrap"><Button variant="contained" disabled={!writable || busy} onClick={() => setConfirmation({ action: 'scan' })}>扫描运营商</Button>
-      <Button variant="outlined" disabled={!writable || busy} onClick={() => setConfirmation({ action: 'auto' })}>自动选网</Button>
+    <Box display="flex" gap={1} flexWrap="wrap"><Button variant="contained" disabled={!writable || busy || !supported('operatorScan')} onClick={() => setConfirmation({ action: 'scan' })}>扫描运营商</Button>
+      <Button variant="outlined" disabled={!writable || busy || !supported('operatorAuto') || !supported('operator')} onClick={() => setConfirmation({ action: 'auto' })}>自动选网</Button>
       {busy && <CircularProgress size={24} />}
     </Box>
     <Typography variant="body2" color="text.secondary">扫描或重新注册可能短暂影响数据连接，最长需要数分钟。</Typography>
@@ -111,7 +113,7 @@ export default function Operators() {
     {notice && <Alert severity={notice.severity} onClose={() => setNotice(undefined)}>{notice.text}</Alert>}
     {showNetworks && <TableContainer component={Paper} variant="outlined"><Table size="small" sx={{ minWidth: 460 }}><TableHead><TableRow>{['运营商', 'PLMN', '网络类型', '扫描状态', '操作'].map(label => <TableCell key={label} sx={{ whiteSpace: 'nowrap' }}>{label}</TableCell>)}</TableRow></TableHead>
       <TableBody>{networks.map(row => <TableRow key={row.plmn} data-operator-plmn={row.plmn}><TableCell>{row.names.join(' / ') || row.plmn}</TableCell><TableCell>{row.plmn}</TableCell><TableCell>{row.technologies.join(' / ') || '—'}</TableCell><TableCell>{labels[row.status]}</TableCell>
-        <TableCell><Button size="small" disabled={!writable || busy} onClick={() => setConfirmation({ action: 'manual', plmn: row.plmn, name: row.names[0] })}>选择</Button></TableCell>
+        <TableCell><Button size="small" disabled={!writable || busy || !supported('operatorManual') || !supported('operator')} onClick={() => setConfirmation({ action: 'manual', plmn: row.plmn, name: row.names[0] })}>选择</Button></TableCell>
       </TableRow>)}{!networks.length && <TableRow><TableCell colSpan={5}>点击“扫描运营商”获取可用网络。</TableCell></TableRow>}</TableBody></Table></TableContainer>}
     <Dialog open={!!confirmation} onClose={() => setConfirmation(undefined)} fullWidth maxWidth="sm"><DialogTitle>{confirmation?.action === 'scan' ? '扫描可用运营商？' : confirmation?.action === 'auto' ? '恢复自动选网？' : '手动注册到所选运营商？'}</DialogTitle>
       <DialogContent><Typography>{confirmation?.action === 'manual' ? `${confirmation.name || ''} · ${confirmation.plmn}。手动选网失败时不会自动切换到其他运营商，可使用“自动选网”恢复。` : confirmation?.action === 'scan' ? '扫描可能需要1至3分钟，期间蜂窝数据可能暂时不可用。' : '由模块自动选择允许注册的运营商。'}</Typography>

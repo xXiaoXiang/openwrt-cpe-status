@@ -27,6 +27,7 @@ function readOperator() {
 // File-only task polling; state refresh is explicit and uses the shared AT lock.
 export const operatorReader = statusRuntime + radioSettingsRuntime + operatorRuntime + String.raw`
 mkdir(directory, 0700);
+if (profile && !profileHas('operator')) { print(sprintf('%J\n', profileUnsupported('operator'))); exit(0); }
 const self = getenv('CPE_STATUS_OPERATOR_SCRIPT') || '/usr/libexec/cpe-status-operators';
 if (!match(self, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid operator executable');
 if (length(ARGV) > 1 || (length(ARGV) && index(['refresh','--refresh','current','state'],ARGV[0]) < 0)) die('Invalid operator read arguments');

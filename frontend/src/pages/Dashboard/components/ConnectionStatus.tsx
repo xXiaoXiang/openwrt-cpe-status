@@ -31,6 +31,9 @@ export function ConnectionStatus({ qosInfo, connectivity, connectionInfo }: Conn
     <Stack spacing={1}>
       {[['协议 / 网卡', [connectionInfo?.protocol, connectionInfo?.interface].filter(Boolean).join(' / ')],
         ['连接时长', connectionInfo?.uptime_seconds === undefined ? '-' : `${Math.floor(connectionInfo.uptime_seconds / 3600)}时 ${Math.floor(connectionInfo.uptime_seconds / 60) % 60}分 ${Math.floor(connectionInfo.uptime_seconds) % 60}秒`],
+        ['QCI', qosInfo?.qci == null ? '-' : String(qosInfo.qci)],
+        ['下行', qosInfo?.dl_speed == null ? '-' : `${(qosInfo.dl_speed / 1000).toFixed(0)} Mbps`],
+        ['上行', qosInfo?.ul_speed == null ? '-' : `${(qosInfo.ul_speed / 1000).toFixed(0)} Mbps`],
         ['IPv4', connectionInfo?.ipv4.join(', ')], ['IPv6', connectionInfo?.ipv6.join(', ')], ['IPv6 前缀', connectionInfo?.ipv6_prefix.join(', ')]].filter(([label, value]) => !label?.startsWith('IPv6') || !!value).map(([label, value]) =>
         <Box key={label} display="flex" justifyContent="space-between" alignItems="center" gap={1}><Typography variant="caption" color="text.secondary" sx={{ flexShrink: 0 }}>{label}</Typography><Typography variant="body2" sx={{ overflowWrap: 'anywhere', textAlign: 'right', ...(label?.startsWith('IPv') ? getSensitiveStyle(showInfo) : {}) }}>{value || '-'}</Typography></Box>)}
     </Stack>
@@ -88,7 +91,7 @@ export function ConnectionStatus({ qosInfo, connectivity, connectionInfo }: Conn
         </Box>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="caption" color="text.secondary">
-            下行速率
+            下行
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {qosInfo?.dl_speed ? `${(qosInfo.dl_speed / 1000).toFixed(0)} Mbps` : '-'}
@@ -96,7 +99,7 @@ export function ConnectionStatus({ qosInfo, connectivity, connectionInfo }: Conn
         </Box>
         <Box display="flex" justifyContent="space-between" alignItems="center">
           <Typography variant="caption" color="text.secondary">
-            上行速率
+            上行
           </Typography>
           <Typography variant="body2" fontWeight="medium">
             {qosInfo?.ul_speed ? `${(qosInfo.ul_speed / 1000).toFixed(0)} Mbps` : '-'}

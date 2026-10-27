@@ -33,6 +33,8 @@ import { CellTower, Visibility, VisibilityOff, ExpandMore, ExpandLess, Info } fr
 import { useSensitiveVisibility } from '../../../contexts/revealSensitive'
 import { getSensitiveStyle, formatSignalValue, getSignalChipColor } from '../utils'
 import type { CellsResponse, CellInfo as Cell } from '@/api/types'
+import { useCapabilities } from '@/contexts/CapabilitiesContext'
+import { operationSupported } from '../../../../../shared/availability.ts'
 
 interface CellInfoProps {
   cellsInfo: CellsResponse | null
@@ -40,9 +42,11 @@ interface CellInfoProps {
   renderAction?: (cell: Cell) => ReactNode
   headerAction?: ReactNode
   showPlmn?: boolean
+  unavailable?: boolean
 }
 
-export function CellInfo({ cellsInfo, stale = false, renderAction, showPlmn = false, headerAction }: CellInfoProps) {
+export function CellInfo({ cellsInfo, stale = false, renderAction, showPlmn = false, headerAction, unavailable = false }: CellInfoProps) {
+  const profile = useCapabilities()?.modem_profile
   const [expanded, setExpanded] = useState(true)
   const [showInfo, setShowInfo] = useSensitiveVisibility()
 
@@ -220,7 +224,7 @@ export function CellInfo({ cellsInfo, stale = false, renderAction, showPlmn = fa
                       <Box display="flex" alignItems="center" justifyContent="center" gap={1} py={1}>
                         <Info fontSize="small" color="disabled" />
                         <Typography variant="caption" color="text.secondary">
-                          暂无小区数据
+                          {unavailable || (profile && !operationSupported(profile, 'serving')) ? '-' : '暂无小区数据'}
                         </Typography>
                       </Box>
                     </TableCell>

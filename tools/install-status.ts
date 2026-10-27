@@ -2,17 +2,20 @@ import { execFileSync } from 'node:child_process'
 import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { resolve, basename, sep } from 'node:path'
+import { packageManifest, packageRelease } from '../project.ts'
 
-const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || 'luci-app-cpe-status-1.0.0-r0.apk')
+const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || `luci-app-cpe-status-${packageManifest.version}-r${packageRelease}.apk`)
+const reinstall = process.argv.includes('--reinstall') ? ' --force-reinstall' : ''
 if (!apk.startsWith(root + sep) || !/^luci-app-cpe-status-[\d.]+-r\d+\.apk$/.test(basename(apk))) throw new Error('Invalid generated APK path')
 const sshOptions = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts']
-const ssh = (script: string) => execFileSync('ssh', [...sshOptions, 'root@192.168.6.248', 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })
+const router = process.env.CPE_ROUTER || 'root@192.168.6.248'
+const ssh = (script: string) => execFileSync('ssh', [...sshOptions, router, 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })
 const untouched = () => ssh("uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum").trim()
 const before = untouched(), sha256 = createHash('sha256').update(await readFile(apk)).digest('hex'), name = basename(apk)
-execFileSync('scp', ['-O', ...sshOptions, apk, `root@192.168.6.248:/root/${name}`], { stdio: 'inherit', windowsHide: true })
+execFileSync('scp', ['-O', ...sshOptions, apk, `${router}:/root/${name}`], { stdio: 'inherit', windowsHide: true })
 const verified = ssh(`sha256sum /root/${name}`).trim().split(/\s+/)[0]
 if (verified !== sha256) throw new Error('Router APK checksum mismatch')
-console.log(ssh(`apk add --network=no --allow-untrusted /root/${name}\napk list --installed luci-app-cpe-status`))
+console.log(ssh(`apk add --network=no --allow-untrusted${reinstall} /root/${name}\napk list --installed luci-app-cpe-status`))
 const after = untouched()
 if (before !== after) throw new Error('Unexpected configuration change outside network.wwan')
 const summary = ssh(`

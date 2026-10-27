@@ -13,6 +13,8 @@ import { SimCard, Visibility, VisibilityOff, Phone, Sms, Language } from '@mui/i
 import { useSensitiveVisibility } from '../../../contexts/revealSensitive'
 import { getSensitiveStyle } from '../utils'
 import type { NetworkInfo, SimInfo } from '@/api/types'
+import { useCapabilities } from '@/contexts/CapabilitiesContext'
+import { operationSupported } from '../../../../../shared/availability.ts'
 
 interface SimCardInfoProps {
   simInfo: SimInfo | null
@@ -20,6 +22,8 @@ interface SimCardInfoProps {
 }
 
 export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
+  const profile = useCapabilities()?.modem_profile
+  const absent = (name: string) => profile && !operationSupported(profile, name)
   const [showInfo, setShowInfo] = useSensitiveVisibility()
 
   return (
@@ -31,7 +35,7 @@ export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
             SIM 卡信息
           </Typography>
           <Chip
-            label={!simInfo ? '等待 SIM 信息' : simInfo.present ? '已插入' : '未插入'}
+            label={absent('simPin') ? '-' : !simInfo ? '等待 SIM 信息' : simInfo.present ? '已插入' : '未插入'}
             color={!simInfo ? 'default' : simInfo.present ? 'success' : 'error'}
             size="small"
             variant="outlined"
@@ -49,7 +53,7 @@ export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
               ICCID
             </Typography>
             <Typography variant="body2" fontWeight="medium" fontFamily="monospace" sx={getSensitiveStyle(showInfo)}>
-              {simInfo?.iccid || 'N/A'}
+              {absent('iccid') ? '-' : simInfo?.iccid || 'N/A'}
             </Typography>
           </Box>
           <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -57,7 +61,7 @@ export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
               IMSI
             </Typography>
             <Typography variant="body2" fontWeight="medium" fontFamily="monospace" sx={getSensitiveStyle(showInfo)}>
-              {simInfo?.imsi || 'N/A'}
+              {absent('imsi') ? '-' : simInfo?.imsi || 'N/A'}
             </Typography>
           </Box>
           <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -68,7 +72,7 @@ export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
               </Typography>
             </Box>
             <Typography variant="body2" fontWeight="medium" fontFamily="monospace" sx={getSensitiveStyle(showInfo)}>
-              {simInfo?.phone_numbers?.length ? simInfo.phone_numbers[0] : 'N/A'}
+              {absent('phone') ? '-' : simInfo?.phone_numbers?.length ? simInfo.phone_numbers[0] : 'N/A'}
             </Typography>
           </Box>
           <Box display="flex" justifyContent="space-between" alignItems="center">
@@ -79,7 +83,7 @@ export function SimCardInfo({ simInfo, networkInfo }: SimCardInfoProps) {
               </Typography>
             </Box>
             <Typography variant="body2" fontWeight="medium" fontFamily="monospace" sx={getSensitiveStyle(showInfo)}>
-              {simInfo?.sms_center || 'N/A'}
+              {absent('smsCenter') ? '-' : simInfo?.sms_center || 'N/A'}
             </Typography>
           </Box>
           <Box display="flex" justifyContent="space-between" alignItems="center">

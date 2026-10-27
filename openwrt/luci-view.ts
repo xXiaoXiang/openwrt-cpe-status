@@ -1,0 +1,86 @@
+// LuCI loads this generated view directly; the existing React application stays
+// in one iframe so switching tabs preserves its data and pending operations.
+export const luciStatusView = String.raw`'use strict';
+'require view';
+'require fs';
+'require poll';
+'require ui';
+return view.extend({
+  busy: false,
+  state: null,
+  readStatus: function() {
+    return fs.exec('/usr/libexec/cpe-status-service-status', []).then(function(result) {
+      var response = JSON.parse(result.stdout || '{}');
+      if (result.code !== 0 || response.status !== 'ok' || !response.data)
+        throw new Error(response.message || '无法读取服务状态');
+      return response.data;
+    });
+  },
+  load: function() {
+    return this.readStatus().catch(function() { return null; });
+  },
+  refreshStatus: function() {
+    if (this.busy) return Promise.resolve();
+    return this.readStatus().then(L.bind(function(state) {
+      this.state = state; this.updateStatus();
+    }, this)).catch(L.bind(function() {
+      this.state = null; this.updateStatus();
+    }, this));
+  },
+  updateStatus: function() {
+    var state = this.state, known = !!state, count = known ? state.running : 0;
+    this.statusNode.textContent = !known ? '状态未知' : count === state.total ? '运行中' : count ? '部分运行 (' + count + '/' + state.total + ')' : '未运行';
+    this.statusNode.style.color = !known ? 'var(--text-color-secondary, #888)' : count === state.total ? '#269f42' : count ? '#b7791f' : '#d63638';
+    var names = { wwan:'自动 APN', speed:'网速采样', sms:'短信同步' };
+    this.statusNode.title = known ? state.processes.map(function(p) { return (names[p.name] || p.name) + '：' + (p.running ? '运行中' : '未运行'); }).join('\n') : '无法读取服务状态';
+    this.runButton.textContent = count ? '停止' : '启动';
+    this.runButton.setAttribute('data-action', count ? 'stop' : 'start');
+    this.enableButton.textContent = known && state.enabled ? '禁用自启' : '启用自启';
+    this.enableButton.setAttribute('data-action', known && state.enabled ? 'disable' : 'enable');
+    [this.runButton, this.enableButton, this.restartButton].forEach(L.bind(function(button) {
+      button.disabled = this.busy || !known || !L.hasViewPermission();
+    }, this));
+  },
+  handleService: function(event) {
+    if (this.busy || !this.state || !L.hasViewPermission()) return Promise.resolve();
+    var button = event.currentTarget, action = button.getAttribute('data-action');
+    this.busy = true; this.updateStatus(); button.classList.add('spinning');
+    return fs.exec('/usr/libexec/cpe-status-service-control', [action]).then(function(result) {
+      var response = JSON.parse(result.stdout || '{}');
+      if (result.code !== 0 || response.status !== 'ok') throw new Error(response.message || '服务操作失败');
+    }).catch(function(error) {
+      ui.addNotification(null, E('p', {}, error.message || String(error)), 'error');
+    }).finally(L.bind(function() {
+      button.classList.remove('spinning'); this.busy = false;
+      this.updateStatus(); return this.refreshStatus();
+    }, this));
+  },
+  render: function(state) {
+    this.state = state;
+    this.statusNode = E('strong', { 'data-cpe-service-status':'', 'aria-live':'polite' }, '');
+    var click = L.bind(this.handleService, this);
+    this.runButton = E('button', { 'class':'cbi-button cbi-button-action', click:click }, '');
+    this.enableButton = E('button', { 'class':'cbi-button cbi-button-neutral', click:click, title:'仅改变开机自启设置，不改变当前运行状态' }, '');
+    this.restartButton = E('button', { 'class':'cbi-button cbi-button-action', 'data-action':'restart', click:click }, '重启');
+    this.updateStatus();
+    var bar = E('div', { 'class':'cpe-service-bar' }, [
+      E('div', { 'class':'cpe-service-state' }, [this.statusNode]),
+      E('div', { 'class':'cpe-service-actions' }, [this.runButton, this.enableButton, this.restartButton])
+    ]);
+    var pages = [['仪表盘', '/'], ['频段与小区设置', '/band-lock'], ['运营商与APN设置', '/operators'], ['AT控制台', '/at-console'], ['短信', '/sms']];
+    var frame = E('iframe', { src:L.resource('cpe-status/index.html')+'?embedded=1&source=quectel#/', title:'CPE Status', style:'width:100%;height:calc(100vh - 165px);min-height:640px;border:0' });
+    var items = pages.map(function(page, index) {
+      return E('li', { 'class':index === 0 ? 'cbi-tab' : 'cbi-tab-disabled', role:'presentation' }, [
+        E('a', { href:'#', role:'tab', 'aria-selected':index === 0 ? 'true' : 'false', click:function(event) {
+          event.preventDefault();
+          items.forEach(function(item) { item.className = 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected','false'); });
+          this.parentNode.className = 'cbi-tab'; this.setAttribute('aria-selected','true');
+          frame.contentWindow.location.hash = page[1];
+        } }, page[0])
+      ]);
+    });
+    poll.add(L.bind(this.refreshStatus, this), 5);
+    return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex-shrink:0}.cpe-service-actions button{white-space:nowrap}@media(max-width:600px){.cpe-service-state{width:100%}.cpe-service-actions{width:100%;justify-content:flex-end}}'), bar, E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
+  }, handleSave:null, handleSaveApply:null, handleReset:null
+});
+`
