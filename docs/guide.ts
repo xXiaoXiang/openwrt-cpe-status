@@ -22,6 +22,10 @@ npm run build
 
 将 build/openwrt-status-package 复制到 OpenWrt / ImmortalWrt SDK 的 package/luci-app-cpe-status，执行 make package/luci-app-cpe-status/compile V=s。包依赖 luci-base、rpcd-mod-file、ucode、ucode-mod-fs、ucode-mod-ubus、sms-tool、comgt、adb，以及系统自带的 BusyBox sha256sum。build/openwrt-package 是保留的早期 Node 原型，不是当前推荐安装包。
 
+tools/package-status-sdk.ts 的 start、status、fetch 接受第二个参数 aarch64_cortex-a53 或 x86_64，分别使用编译机上独立的 ImmortalWrt 25.12.2 SDK。产物保存到 build/sdk-test/<架构>/，APK 文件名添加对应架构后缀；包内名称和版本仍为 luci-app-cpe-status / 1.1.0-r6。SDK 下载必须与官方 SHA256 一致。ARM 对应 mediatek/filogic，x86_64 对应 x86/64；后者目前仅完成 SDK 构建与包检查，未实机运行。
+
+tools/publish-release.ts v1.1.0 <发布说明文件或-> all 可发布两个架构，或将 all 改为单个架构。已有无架构后缀的 ARM 附件仅在摘要匹配后改名，保留原附件记录；不覆盖摘要不同的已有附件。tools/install-status.ts 默认安装 ARM 包，带架构后缀时先核对目标路由器的 apk 架构。
+
 静态资源统一安装到 **/www/luci-static/resources/cpe-status/**。升级脚本清理旧的 /www/luci-static/resources/openwrt-modem/ 并刷新 LuCI 缓存。
 
 ## 模块适配文件

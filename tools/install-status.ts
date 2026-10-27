@@ -3,13 +3,16 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { resolve, basename, sep } from 'node:path'
 import { packageManifest, packageRelease } from '../project.ts'
+import { apkFilename } from './sdk-targets.ts'
 
-const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || `luci-app-cpe-status-${packageManifest.version}-r${packageRelease}.apk`)
+const root = resolve('build/sdk-test'), apk = resolve(root, process.argv[2] || `aarch64_cortex-a53/${apkFilename(packageManifest.version, packageRelease, 'aarch64_cortex-a53')}`)
 const reinstall = process.argv.includes('--reinstall') ? ' --force-reinstall' : ''
-if (!apk.startsWith(root + sep) || !/^luci-app-cpe-status-[\d.]+-r\d+\.apk$/.test(basename(apk))) throw new Error('Invalid generated APK path')
+if (!apk.startsWith(root + sep) || !/^luci-app-cpe-status-[\d.]+-r\d+(?:-(?:aarch64_cortex-a53|x86_64))?\.apk$/.test(basename(apk))) throw new Error('Invalid generated APK path')
 const sshOptions = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'UserKnownHostsFile=C:/Users/Baron/.ssh/known_hosts']
 const router = process.env.CPE_ROUTER || 'root@192.168.6.248'
 const ssh = (script: string) => execFileSync('ssh', [...sshOptions, router, 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })
+const architecture = /-(aarch64_cortex-a53|x86_64)\.apk$/.exec(basename(apk))?.[1]
+if (architecture && ssh('apk --print-arch').trim() !== architecture) throw new Error('APK architecture does not match the target router')
 const untouched = () => ssh("uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum").trim()
 const before = untouched(), sha256 = createHash('sha256').update(await readFile(apk)).digest('hex'), name = basename(apk)
 execFileSync('scp', ['-O', ...sshOptions, apk, `${router}:/root/${name}`], { stdio: 'inherit', windowsHide: true })

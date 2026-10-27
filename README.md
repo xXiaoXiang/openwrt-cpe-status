@@ -45,11 +45,13 @@ LuCI 入口：**Modem → CPE Status**。
 | 项目 | 已验证环境 |
 | --- | --- |
 | 系统 | ImmortalWrt 25.12.2 |
-| 构建 | 对应 SDK，APK 软件包，aarch64_cortex-a53 |
+| 构建 | 对应 SDK，APK 软件包，aarch64_cortex-a53 / x86_64 |
 | Modem | Quectel RM500Q-GL，固件 RM500QGLABR13A03M4G |
 | 接入 | USB AT 串口，QMI / MBIM 数据接口 |
 
 默认适配以 RM500Q 系列官方 AT 文档为基础，并根据实机返回格式修订。其他 OpenWrt 版本、架构、模块及固件需使用匹配的 SDK 与适配配置验证；锁频、锁小区、温度、短信和诊断能力以模块实际支持为准。当前未启用 eUICC 管理。
+
+发布包按架构命名：`*-aarch64_cortex-a53.apk` 用于对应 ARM 路由器，`*-x86_64.apk` 用于 x86/64。ARM 包已实机验证；x86_64 包完成 SDK 打包与包元数据检查，尚未进行 x86 路由器实机验证。
 
 ## 安装与开始使用
 
@@ -57,11 +59,13 @@ LuCI 入口：**Modem → CPE Status**。
 2. 将 APK 上传到路由器，在支持 APK 的系统上安装：
 
    ```sh
-   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.1.0-r6.apk
+   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.1.0-r6-aarch64_cortex-a53.apk
    ```
 
 3. 检查 `/etc/cpe-status.json`：将 `device` 设置为模块的专用 AT 串口，默认 `/dev/ttyUSB2`；数据接口名称默认 `wwan`，自动 APN 只管理这一接口。
 4. 在 LuCI 打开 **Modem → CPE Status**。修改配置后可在页面顶部重启插件服务。
+
+x86/64 设备请安装同版本的 `luci-app-cpe-status-1.1.0-r6-x86_64.apk`，不要混用架构。
 
 安装依赖 LuCI、rpcd-mod-file、ucode、sms-tool、comgt 和 adb 等组件，由软件包管理器处理。APK 不能直接安装到使用 opkg / IPK 的旧系统；请使用对应 SDK 自行构建。
 
