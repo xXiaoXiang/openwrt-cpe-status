@@ -1,5 +1,6 @@
-// Audited against backend/src/main.rs, dbus.rs, handlers.rs and Dashboard's
-// useDashboardData. This is machine-readable input for the generated README.
+// Historical migration inventory from the original UDX710/oFono backend.
+// Retained for provenance only: commands, cache times and support below describe
+// the initial port, not the current plugin. See modem.d/*.conf and DEV.md instead.
 export const modemInventory = [
   ['/device', 'Modem.GetProperties', 'manufacturer,model,revision,imei,radio', '设备标识300秒；射频10秒'],
   ['/device/imeisv', 'Modem.GetProperties', 'revision', '原接口返回 SVN；CGMR 不能冒充 SVN，暂不移植'],

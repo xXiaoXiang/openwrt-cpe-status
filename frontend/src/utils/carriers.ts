@@ -3,7 +3,6 @@
  * @Date: 2025-11-23 03:05:36
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:45:08
- * @FilePath: /udx710-backend/frontend/src/utils/carriers.ts
  * @Description:
  *
  * Copyright (c) 2025 by 1orz, All Rights Reserved.

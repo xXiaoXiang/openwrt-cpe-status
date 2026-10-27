@@ -3,14 +3,13 @@
  * @Date: 2025-12-10 10:16:39
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:44:31
- * @FilePath: /udx710-backend/frontend/src/pages/Dashboard/components/StatusOverview.tsx
  * @Description:
  *
  * Copyright (c) 2025 by 1orz, All Rights Reserved.
  */
 import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { alpha, Box, Chip, Paper, Tooltip, Typography } from '@mui/material'
+import { alpha, Box, Chip, Paper, Typography } from '@mui/material'
 import { useFitToWidth } from '@/hooks/useFitToWidth'
 import { useScrollDock } from '@/hooks/useScrollDock'
 import { useDashboardHeader } from '@/contexts/DashboardHeaderContext'
@@ -34,7 +33,6 @@ interface StatusOverviewProps {
   airplaneMode: AirplaneModeResponse | null
   imsStatus: ImsStatusResponse | null
   roaming?: RoamingResponse | null
-  waitingMessage?: string | null
 }
 
 function HeaderStatus({ children, alignment = 'window' }: { children: ReactNode; alignment?: 'window' | 'start' }) {
@@ -75,7 +73,6 @@ export function StatusOverview({
   airplaneMode,
   imsStatus,
   roaming,
-  waitingMessage,
 }: StatusOverviewProps) {
   const StatusContainer = presentation === 'dashboard' ? DashboardStatus : presentation === 'bar' ? BarStatus : HeaderStatus
   const mode = airplaneMode ?? deviceInfo
@@ -89,7 +86,7 @@ export function StatusOverview({
     const technology = networkInfo?.technology && networkInfo.technology.toLowerCase() !== 'unknown'
       ? networkInfo.technology : cellsInfo?.serving_cell?.tech
     const reported = technology?.trim().toUpperCase()
-    // EN-DC is the LTE/NR dual connectivity mode reported by oFono itself.
+    // EN-DC denotes LTE/NR dual connectivity (5G NSA).
     if (reported === 'ENDC' || reported === 'EN-DC') return '5G NSA'
     if (reported) return reported
     return 'N/A'
@@ -164,52 +161,48 @@ export function StatusOverview({
         </Box>
 
         {(searching || networkTech !== 'N/A') && (
-          <Tooltip title={[networkTech === '5G NSA' ? 'oFono 报告 EN-DC：LTE 与 NR 双连接（5G NSA）' : '', searching ? registrationLabel : waitingMessage].filter(Boolean).join('；')}>
-            <Box
-              data-network-technology
-              data-searching={searching}
-              aria-label={searching ? `${networkTech === 'N/A' ? '-' : networkTech}，${registrationLabel}` : undefined}
-              sx={{ position: 'relative', display: 'inline-flex', p: { xs: '2px', sm: '3px' }, borderRadius: 999 }}
-            >
-              <Chip
-                icon={<WifiTethering />}
-                label={networkTech === 'N/A' ? '-' : networkTech}
-                color={networkTech === '5G' || networkTech === 'NR' || networkTech === '5G NSA' ? 'success' : 'primary'}
-                size="small"
-                sx={{ fontWeight: 'bold' }}
-              />
-              {searching && (
-                <Box
-                  component="svg"
-                  aria-hidden="true"
-                  sx={{
-                    position: 'absolute', inset: 0, width: '100%', height: '100%',
-                    pointerEvents: 'none', fill: 'none', color: 'primary.main',
-                    '& rect': {
-                      width: 'calc(100% - 2px)', height: 'calc(100% - 2px)',
-                      stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round',
-                      strokeDasharray: '28 72',
-                      animation: 'network-search-border 1.8s linear infinite',
-                    },
-                    '@keyframes network-search-border': {
-                      from: { strokeDashoffset: 0 }, to: { strokeDashoffset: -100 },
-                    },
-                    '@media (prefers-reduced-motion: reduce)': {
-                      '& rect': { animation: 'none' },
-                    },
-                  }}
-                >
-                  <rect x="1" y="1" rx="14" pathLength="100" />
-                </Box>
-              )}
-            </Box>
-          </Tooltip>
+          <Box
+            data-network-technology
+            data-searching={searching}
+            aria-label={searching ? `${networkTech === 'N/A' ? '-' : networkTech}，${registrationLabel}` : undefined}
+            sx={{ position: 'relative', display: 'inline-flex', p: { xs: '2px', sm: '3px' }, borderRadius: 999 }}
+          >
+            <Chip
+              icon={<WifiTethering />}
+              label={networkTech === 'N/A' ? '-' : networkTech}
+              color={networkTech === '5G' || networkTech === 'NR' || networkTech === '5G NSA' ? 'success' : 'primary'}
+              size="small"
+              sx={{ fontWeight: 'bold' }}
+            />
+            {searching && (
+              <Box
+                component="svg"
+                aria-hidden="true"
+                sx={{
+                  position: 'absolute', inset: 0, width: '100%', height: '100%',
+                  pointerEvents: 'none', fill: 'none', color: 'primary.main',
+                  '& rect': {
+                    width: 'calc(100% - 2px)', height: 'calc(100% - 2px)',
+                    stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round',
+                    strokeDasharray: '28 72',
+                    animation: 'network-search-border 1.8s linear infinite',
+                  },
+                  '@keyframes network-search-border': {
+                    from: { strokeDashoffset: 0 }, to: { strokeDashoffset: -100 },
+                  },
+                  '@media (prefers-reduced-motion: reduce)': {
+                    '& rect': { animation: 'none' },
+                  },
+                }}
+              >
+                <rect x="1" y="1" rx="14" pathLength="100" />
+              </Box>
+            )}
+          </Box>
         )}
 
         {radioOnline && !searching && (
-          <Tooltip title="蜂窝网络注册状态：来自 oFono NetworkRegistration.Status；已注册不代表数据连接已激活。">
-            <Chip icon={<Router />} label={registrationLabel} color={registrationColor} variant="outlined" size="small" />
-          </Tooltip>
+          <Chip icon={<Router />} label={registrationLabel} color={registrationColor} variant="outlined" size="small" />
         )}
 
         {registered && roaming?.is_roaming && typeof roaming.roaming_allowed === 'boolean' && (
@@ -221,9 +214,7 @@ export function StatusOverview({
           />
         )}
 
-        <Tooltip title="Modem 状态：来自 oFono Modem.Powered / Online；已上线表示射频已开启，不代表互联网可达。">
-          <Chip icon={flightMode ? <FlightTakeoff /> : <PowerSettingsNew />} label={modemLabel} color={modemColor} size="small" />
-        </Tooltip>
+        <Chip icon={flightMode ? <FlightTakeoff /> : <PowerSettingsNew />} label={modemLabel} color={modemColor} size="small" />
 
         {registered && imsStatus?.registered && <Chip label="VoLTE" color="info" size="small" variant="outlined" />}
       </Box>

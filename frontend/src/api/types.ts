@@ -3,7 +3,6 @@
  * @Date: 2025-12-13 12:41:48
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:42:58
- * @FilePath: /udx710-backend/frontend/src/api/types.ts
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 
@@ -384,7 +383,7 @@ export type RadioMode = 'auto' | 'lte' | 'nr'
 // 射频模式响应
 export interface RadioModeResponse {
   mode: string // 当前模式: auto | lte | nr | unknown
-  technology_preference: string // ofono 原始 TechnologyPreference 值
+  technology_preference: string // 模块回读的网络模式偏好值
 }
 
 // 射频模式请求
@@ -630,7 +629,7 @@ export interface UsbAdvanceRequest {
 
 // APN Context 信息
 export interface ApnContext {
-  path: string           // D-Bus 路径 (如 /ril_0/context2)
+  path: string           // PDP 上下文标识
   name: string           // 名称
   active: boolean        // 是否激活
   apn: string            // APN 名称 (如 cbnet, cmnet)

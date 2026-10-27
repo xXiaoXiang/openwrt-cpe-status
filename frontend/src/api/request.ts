@@ -31,7 +31,7 @@ export function request<T>(
     && !options.signal && !options.body && !options.headers) {
     return pendingReads(`${url}:${returnText ? 'text' : 'json'}:${options.cache ?? 'default'}`, () => {
       // The read-only router collector already coordinates a complete snapshot.
-      // oFono-specific registration gates would defer cells for no reason here.
+      // Additional registration gates would defer cells for no reason here.
       if (returnText || usesSnapshotTransport() || !isManagedModemRead(url)) return performRequest()
       return policy.read<T>(url, (path) => rawReads(`${path}:${options.cache ?? 'default'}`, async () => {
         if (path === url) return await performRequest() as ApiResponse<unknown>

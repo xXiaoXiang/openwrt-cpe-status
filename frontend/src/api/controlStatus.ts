@@ -1,7 +1,7 @@
 import type { ApiResponse } from './types.ts'
 import { isDeferredMessage, isDeferredResponse } from './modemPolling.ts'
 
-// A deferred write may already have reached oFono. Only poll its real state;
+// A deferred write may already have reached the modem. Only poll its real state;
 // replaying the POST could toggle the modem twice. No optimistic confirmation.
 export async function readDeferredControl<T>(
   read: () => Promise<ApiResponse<T>>,

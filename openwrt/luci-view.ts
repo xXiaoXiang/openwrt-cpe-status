@@ -80,7 +80,7 @@ return view.extend({
       ]);
     });
     poll.add(L.bind(this.refreshStatus, this), 5);
-    return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex-wrap:wrap;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex-shrink:0}.cpe-service-actions button{white-space:nowrap}@media(max-width:600px){.cpe-service-state{width:100%}.cpe-service-actions{width:100%;justify-content:flex-end}}'), bar, E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
+    return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex:0 0 auto;max-width:100%;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex:0 0 auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}.cpe-service-actions button{white-space:nowrap}'), bar, E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
   }, handleSave:null, handleSaveApply:null, handleReset:null
 });
 `

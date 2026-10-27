@@ -12,7 +12,9 @@ const sshOptions = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'User
 const router = process.env.CPE_ROUTER || 'root@192.168.6.248'
 const ssh = (script: string) => execFileSync('ssh', [...sshOptions, router, 'sh -s'], { input: script + '\n', encoding: 'utf8', windowsHide: true })
 const architecture = /-(aarch64_cortex-a53|x86_64)\.apk$/.exec(basename(apk))?.[1]
-if (architecture && ssh('apk --print-arch').trim() !== architecture) throw new Error('APK architecture does not match the target router')
+// OpenWrt's configured package target is more specific than apk's compiled
+// architecture (for example aarch64_cortex-a53 versus aarch64).
+if (architecture && ssh('cat /etc/apk/arch 2>/dev/null || apk --print-arch').trim() !== architecture) throw new Error('APK architecture does not match the target router')
 const untouched = () => ssh("uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum").trim()
 const before = untouched(), sha256 = createHash('sha256').update(await readFile(apk)).digest('hex'), name = basename(apk)
 execFileSync('scp', ['-O', ...sshOptions, apk, `${router}:/root/${name}`], { stdio: 'inherit', windowsHide: true })

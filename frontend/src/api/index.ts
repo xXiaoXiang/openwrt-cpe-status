@@ -4,7 +4,6 @@ import { backendFetch as fetch } from './transport'
  * @Date: 2025-12-10 09:19:05
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:42:03
- * @FilePath: /udx710-backend/frontend/src/api/index.ts
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 
@@ -89,7 +88,7 @@ import { request } from './request.ts'
 const API_BASE = '/api'
 
 // API 类
-class UDX710API {
+class CpeStatusAPI {
   // 健康检查
   async health() {
     return request<{ status: string; message: string; version: string }>('/health')
@@ -736,7 +735,7 @@ class UDX710API {
 }
 
 // 导出单例
-export const api = new UDX710API()
+export const api = new CpeStatusAPI()
 
 // 导出类型
 export * from './types.ts'

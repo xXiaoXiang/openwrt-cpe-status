@@ -6,7 +6,8 @@ import { packageManifest, packageRelease } from '../project.ts'
 import { sdkTargets, sdkArchitecture, apkFilename, type SdkArchitecture } from './sdk-targets.ts'
 
 const version = process.argv[2]
-if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('Usage: publish-release.ts vX.Y.Z [notes-file|-] [aarch64_cortex-a53|x86_64|all]')
+if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('Usage: publish-release.ts vX.Y.Z [notes-file|-] [aarch64_cortex-a53|x86_64|all] [--prune-old-apks]')
+const pruneOldApks = process.argv.includes('--prune-old-apks')
 const revision = version.slice(1) === packageManifest.version ? packageRelease : 0
 const architectures = process.argv[4] === 'all' ? Object.keys(sdkTargets) as SdkArchitecture[] : [sdkArchitecture(process.argv[4])]
 const apks = await Promise.all(architectures.map(async architecture => {
@@ -60,11 +61,29 @@ for (const item of apks) {
 }
 const finalAssets = await fetch(`${endpoint}/${release.id}/assets`, { headers })
 if (!finalAssets.ok) throw new Error(`Cannot verify release assets: ${finalAssets.status}`)
-const published = await finalAssets.json() as ReleaseAsset[]
+let published = await finalAssets.json() as ReleaseAsset[]
 for (const item of apks) {
   const asset = published.find(value => value.name === item.name)
   if (!asset) throw new Error('Uploaded APK is missing: ' + item.name)
   await verify(asset, item.hash)
+}
+// Only prune after all requested replacements have uploaded and passed checksum
+// verification. Restrict deletion to this version and the requested architectures.
+const removed: string[] = []
+if (pruneOldApks) {
+  for (const asset of published) {
+    const match = /^luci-app-cpe-status-([\d.]+)-r\d+(?:-(aarch64_cortex-a53|x86_64))?\.apk$/.exec(asset.name)
+    const architecture = match?.[2] || 'aarch64_cortex-a53'
+    if (!match || match[1] !== version.slice(1) || !architectures.includes(architecture as SdkArchitecture)
+      || apks.some(item => item.name === asset.name)) continue
+    const deleted = await fetch(`${endpoint}/assets/${asset.id}`, { method: 'DELETE', headers })
+    if (!deleted.ok) throw new Error(`Cannot remove obsolete APK ${asset.name}: ${deleted.status}`)
+    removed.push(asset.name)
+  }
+  const refreshed = await fetch(`${endpoint}/${release.id}/assets`, { headers })
+  if (!refreshed.ok) throw new Error(`Cannot verify remaining release assets: ${refreshed.status}`)
+  published = await refreshed.json() as ReleaseAsset[]
+  if (published.some(asset => removed.includes(asset.name))) throw new Error('Obsolete APK still exists')
 }
 const rows = published.filter(asset => /-(aarch64_cortex-a53|x86_64)\.apk$/.test(asset.name)).map(asset => {
   const architecture = /-(aarch64_cortex-a53|x86_64)\.apk$/.exec(asset.name)![1]
@@ -75,4 +94,4 @@ const intro = notes ?? release.body.split('\n\nImmortalWrt 25.12.2')[0]
 const verification = published.some(asset => asset.name.endsWith('-x86_64.apk')) ? '\n\nx86_64 包已完成 SDK 构建及包完整性、架构和依赖检查，尚未进行 x86 路由器实机验证。' : ''
 const updated = await fetch(`${endpoint}/${release.id}`, { method: 'PATCH', headers, body: JSON.stringify({ body: `${intro}\n\nImmortalWrt 25.12.2 APK\n\n| 架构 | 下载 | SHA256 |\n| --- | --- | --- |\n${rows.join('\n')}${verification}` }) })
 if (!updated.ok) throw new Error(`Release notes update failed: ${updated.status}`)
-console.log(JSON.stringify({ release: release.html_url, artifacts: apks.map(({name,hash}) => ({ name, sha256: hash })) }))
+console.log(JSON.stringify({ release: release.html_url, artifacts: apks.map(({name,hash}) => ({ name, sha256: hash })), removed }))

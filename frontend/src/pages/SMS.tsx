@@ -3,7 +3,6 @@
  * @Date: 2025-12-09 17:34:01
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:45:01
- * @FilePath: /udx710-backend/frontend/src/pages/SMS.tsx
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 

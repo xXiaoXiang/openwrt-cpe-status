@@ -3,7 +3,6 @@
  * @Date: 2025-12-10 10:22:12
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:44:42
- * @FilePath: /udx710-backend/frontend/src/pages/Dashboard/index.tsx
  * @Description:
  *
  * Copyright (c) 2025 by 1orz, All Rights Reserved.
@@ -26,7 +25,7 @@ import {
 
 export default function Dashboard() {
   const embedded = new URLSearchParams(location.search).has('embedded')
-  const { initialLoading, error, setError, pendingControl, data, actions, waitingMessage } = useSharedDashboardData()
+  const { initialLoading, error, setError, pendingControl, data, actions } = useSharedDashboardData()
 
   return (
     <Box>
@@ -42,7 +41,7 @@ export default function Dashboard() {
         presentation="dashboard"
         deviceInfo={data.deviceInfo} networkInfo={data.networkInfo} cellsInfo={data.cellsInfo}
         airplaneMode={data.airplaneMode} imsStatus={data.imsStatus}
-        roaming={data.roaming} waitingMessage={waitingMessage}
+        roaming={data.roaming}
       />}
 
       {/* 主体内容区，PC 端采用多列布局 */}

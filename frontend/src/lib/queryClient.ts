@@ -3,7 +3,6 @@
  * @Date: 2025-12-10 10:28:41
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:44:05
- * @FilePath: /udx710-backend/frontend/src/lib/queryClient.ts
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 

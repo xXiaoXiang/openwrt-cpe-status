@@ -24,7 +24,7 @@ export function isManagedModemRead(url: string) {
 }
 
 export function isModemBusy(message: string) {
-  return /org\.ofono\.Error\.InProgress|operation already in progress/i.test(message)
+  return /operation already in progress/i.test(message)
 }
 
 export function isDeferredMessage(message: string) {
@@ -60,12 +60,6 @@ export function createModemReadPolicy(now = Date.now) {
       return deferred('Modem 正忙，稍后自动重试', blockedUntil - now())
     }
     if (isDeferredResponse(result)) return deferred('Modem 状态正在恢复，稍后自动重试', result.retry_after_ms)
-    // Older backends report a temporarily missing IMS interface as an error.
-    // Back off this endpoint without hiding unrelated DBus/permission failures.
-    if (url === '/ims/status' && /UnknownMethod|UnknownInterface/.test(result.message ?? '')
-      && result.message?.includes('org.ofono.IpMultimediaSystem')) {
-      return deferred('等待 IMS 接口恢复')
-    }
     return undefined
   }
   const observe = (url: string, result: ApiResponse<unknown>) => {

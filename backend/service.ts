@@ -289,7 +289,7 @@ export class ModemService {
           await this.euicc.invoke(['notification', action, String(sequence)])
           return ok(action === 'remove' ? { removed: [sequence], failed: [], skipped: 0 } : {})
         }
-        case '/api/euicc/refresh-sim': throw new Error('Unsupported: RM500Q SIM refresh requires a documented APDU/reset sequence; do not reuse UDX710 AT commands')
+        case '/api/euicc/refresh-sim': throw new Error('Unsupported: SIM refresh requires a documented APDU/reset sequence for this modem')
       }
     }
     throw new Error(`Unsupported: ${method} ${route}`)

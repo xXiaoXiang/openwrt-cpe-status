@@ -40,7 +40,7 @@ LuCI 入口：**Modem → CPE Status**。
 
 ## 支持情况
 
-当前版本：**1.1（v1.1.0）**，对应软件包 **1.1.0-r6**。
+当前版本：**1.1（v1.1.0）**，对应软件包 **1.1.0-r7**。
 
 | 项目 | 已验证环境 |
 | --- | --- |
@@ -59,13 +59,13 @@ LuCI 入口：**Modem → CPE Status**。
 2. 将 APK 上传到路由器，在支持 APK 的系统上安装：
 
    ```sh
-   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.1.0-r6-aarch64_cortex-a53.apk
+   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.1.0-r7-aarch64_cortex-a53.apk
    ```
 
 3. 检查 `/etc/cpe-status.json`：将 `device` 设置为模块的专用 AT 串口，默认 `/dev/ttyUSB2`；数据接口名称默认 `wwan`，自动 APN 只管理这一接口。
 4. 在 LuCI 打开 **Modem → CPE Status**。修改配置后可在页面顶部重启插件服务。
 
-x86/64 设备请安装同版本的 `luci-app-cpe-status-1.1.0-r6-x86_64.apk`，不要混用架构。
+x86/64 设备请安装同版本的 `luci-app-cpe-status-1.1.0-r7-x86_64.apk`，不要混用架构。
 
 安装依赖 LuCI、rpcd-mod-file、ucode、sms-tool、comgt 和 adb 等组件，由软件包管理器处理。APK 不能直接安装到使用 opkg / IPK 的旧系统；请使用对应 SDK 自行构建。
 

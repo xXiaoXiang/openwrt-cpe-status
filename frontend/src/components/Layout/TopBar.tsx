@@ -3,7 +3,6 @@
  * @Date: 2025-11-22 10:30:41
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:43:28
- * @FilePath: /udx710-backend/frontend/src/components/Layout/TopBar.tsx
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 
@@ -13,7 +12,6 @@
  * @Date: 2025-11-22 10:30:41
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2025-12-13 12:43:22
- * @FilePath: /udx710-backend/frontend/src/components/Layout/TopBar.tsx
  * @Description: 
  * 
  * Copyright (c) 2025 by 1orz, All Rights Reserved. 
@@ -35,7 +33,7 @@ export default function TopBar({ drawerWidth, onMenuClick }: TopBarProps) {
   const { pathname } = useLocation()
   const currentPath = pathname.replace(/\/+$/, '') || '/'
   const pageTitle = navigationItems.find((item) => item.path === currentPath)?.label ?? 'CPE Status'
-  const { data, waitingMessage } = useSharedDashboardData()
+  const { data } = useSharedDashboardData()
   const { setTarget } = useDashboardHeader()
 
   return (
@@ -73,7 +71,7 @@ export default function TopBar({ drawerWidth, onMenuClick }: TopBarProps) {
           <StatusOverview
             deviceInfo={data.deviceInfo} networkInfo={data.networkInfo} cellsInfo={data.cellsInfo}
             airplaneMode={data.airplaneMode} imsStatus={data.imsStatus}
-            roaming={data.roaming} waitingMessage={waitingMessage}
+            roaming={data.roaming}
           />
         )}
       </Toolbar>

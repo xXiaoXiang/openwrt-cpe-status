@@ -3,7 +3,6 @@
  * @Date: 2025-11-22 10:30:41
  * @LastEditors: 1orz cloudorzi@gmail.com
  * @LastEditTime: 2026-04-18 20:15:00
- * @FilePath: /udx710-backend/frontend/src/components/Layout/MainLayout.tsx
  * @Description:
  *
  * Copyright (c) 2025 by 1orz, All Rights Reserved.
@@ -195,7 +194,7 @@ export default function MainLayout() {
                 backgroundImage: `linear-gradient(135deg, ${alpha(theme.palette.primary.main, 0.08)} 0%, ${alpha(theme.palette.secondary.main, 0.03)} 100%)`,
                 border: `1px solid ${alpha(theme.palette.primary.main, 0.1)}`,
               }}>
-                <StatusOverview presentation="bar" {...dashboardData.data} waitingMessage={dashboardData.waitingMessage} />
+                <StatusOverview presentation="bar" {...dashboardData.data} />
                 <SidebarControls />
               </Paper>}
               <Outlet />
