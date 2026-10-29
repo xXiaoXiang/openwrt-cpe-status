@@ -16,10 +16,11 @@ LuCI 入口：**Modem → CPE Status**。
 | 频段/小区 | LTE、5G SA、5G NSA 频段偏好；当前及邻区信息、手动全网扫描；按频点与 PCI 锁定、回读状态及解除锁定 |
 | 运营商/APN | 当前运营商与选网模式、可用运营商扫描、手动或自动注册；多 APN 选择、按 ICCID 保存、全球数据库更新、重新拨号及拨号日志 |
 | AT | 手动执行 AT 命令、常用快捷命令及模块支持的 IMEI 查询与修改 |
-| 短信 | 短信读取、发送、会话浏览和本地历史归档，支持自定义持久存储目录 |
+| 短信 | 短信读取、发送、未读角标、去重归档及手动清理已归档的已读短信 |
 | eUICC | 已安装 lpac 且检测到有效 EID 后显示；Profile 切换、下载、删除、昵称和通知；通信模式/端口设置及 stdio HTTP/APDU bridge |
+| 插件设置 | 原生 LuCI 服务控制、开机自启、短信保存目录与存储检测 |
 
-界面适应桌面与手机，默认跟随 LuCI 深浅色模式，也可手动选择。顶部提供服务状态与启停、自启和重启控制。
+界面适应桌面与手机，默认跟随 LuCI 深浅色模式，也可手动选择。“插件设置”页提供服务状态与启停、自启和重启控制。
 
 ### 减少重复查询
 
@@ -45,7 +46,7 @@ eUICC Profile 下载由后端独立执行，离开页面后仍会继续；下载
 
 ## 支持情况
 
-当前版本：**1.3.0（v1.3.0）**，对应软件包 **1.3.0-r0**。
+当前版本：**1.3.0（v1.3.0）**，对应软件包 **1.3.0-r1**。
 
 | 项目 | 已验证环境 |
 | --- | --- |
@@ -64,13 +65,13 @@ eUICC Profile 下载由后端独立执行，离开页面后仍会继续；下载
 2. 将 APK 上传到路由器，在支持 APK 的系统上安装：
 
    ```sh
-   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.3.0-r0-aarch64_cortex-a53.apk
+   apk add --allow-untrusted /tmp/luci-app-cpe-status-1.3.0-r1-aarch64_cortex-a53.apk
    ```
 
 3. 检查 `/etc/cpe-status/config.json`：将 `device` 设置为模块的专用 AT 串口，默认 `/dev/ttyUSB2`；数据接口名称默认 `wwan`，自动 APN 只管理这一接口。
 4. 在 LuCI 打开 **Modem → CPE Status**。修改配置后可在页面顶部重启插件服务。
 
-x86/64 设备请安装同版本的 `luci-app-cpe-status-1.3.0-r0-x86_64.apk`，不要混用架构。
+x86/64 设备请安装同版本的 `luci-app-cpe-status-1.3.0-r1-x86_64.apk`，不要混用架构。
 
 同一发布页提供可选的 `lpac-2.3.0_p9-r2-<架构>.apk`，支持原生 curl / HTTPS 和 stdio，以及 AT、QMI、UQMI、MBIM 卡片通信后端。该构建基于 [fildunsky/lpac-build](https://github.com/fildunsky/lpac-build/tree/v2.3.0-r4)，附带对应源码及启用 curl 的构建配置；安装时由软件包管理器处理 libcurl、CA 等依赖。已有 lpac 配置升级后会保留，可在 eUICC 卡片通信设置中选择 HTTP 方法。
 
@@ -86,7 +87,7 @@ x86/64 设备请安装同版本的 `luci-app-cpe-status-1.3.0-r0-x86_64.apk`，�
 | `/etc/cpe-status/apn-overrides.json` | 每个 ICCID 的当前选择与 `custom_apn` 历史记录 |
 | `/etc/cpe-status/dualstack_toone.json` | 按归属运营商及 APN 共享的 IPv4 协议回退规则，优先保留用户自定义协议 |
 | `/etc/cpe-status/apn-database.json` | 在线更新的全球 APN 数据库，升级保留 |
-| `/etc/cpe-status/sms` | 默认短信历史目录，可在短信页改为挂载磁盘路径 |
+| `/etc/cpe-status/sms` | 默认短信历史目录，可在“插件设置”页改为挂载磁盘路径 |
 | `/tmp/cpe-status` | 运行缓存与任务结果，路由器重启后清空 |
 
 后端程序统一放在 `/usr/libexec/cpe-status/`。升级会把旧主配置迁移到 `/etc/cpe-status/config.json`，备份保存在 `/etc/cpe-status/legacy/`，并保留 APN、eUICC 和短信等已有自定义数据。

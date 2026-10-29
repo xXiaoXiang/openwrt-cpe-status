@@ -77,7 +77,7 @@ export const rm500q: ModemAdapter = {
       }, { tech: 'nr' }),
     ], { optional: true, allowEmpty: true, note: 'LTE width uses resource blocks; R13 NR width uses the QENG NR enum. LTE field 9 is RSSNR in dB, not the QENG SINR enum. NR QCAINFO only supplements a matching valid QENG cell.' }),
     attach: query('AT+CGATT?', 10_000, [rule('^\\+CGATT:\\s*(.*)$', { attached: field(0, 'boolean') })]),
-    contexts: query('AT+CGDCONT?', 10_000, [rule('^\\+CGDCONT:\\s*(.*)$', { cid: field(0, 'number'), protocol: field(1), apn: field(2), address: field(3, 'string', { optional: true }) })], { allowEmpty: true }),
+    contexts: query('AT+CGDCONT?', 10_000, [rule('^\\+CGDCONT:\\s*(.*)$', { cid: field(0, 'number'), protocol: field(1), apn: field(2, 'string', { optional: true }), address: field(3, 'string', { optional: true }) })], { allowEmpty: true }),
     contextsActive: query('AT+CGACT?', 10_000, [rule('^\\+CGACT:\\s*(.*)$', { cid: field(0, 'number'), active: field(1, 'boolean') })], { allowEmpty: true }),
     apnSet: write('AT+CGDCONT={cid},"{protocol}","{apn}"', { cid: '[1-9]|1[0-6]', protocol: 'IP|IPV6|IPV4V6', apn: '[A-Za-z0-9._-]{0,100}' }, ['contexts', 'contextsActive']),
     mode: query('AT+QNWPREFCFG="mode_pref"', 30_000, [rule('^\\+QNWPREFCFG:\\s*("mode_pref",.*)$', { mode: field(1) })]),
@@ -98,7 +98,8 @@ export const rm500q: ModemAdapter = {
     qos: query('AT+CGEQOSRDP', 30_000, [rule('^\\+CGEQOSRDP:\\s*(.*)$', { cid: field(0, 'number'), qci: field(1, 'number'), dl_gbr: measurement(2), ul_gbr: measurement(3), dl_mbr: measurement(4), ul_mbr: measurement(5), dl_ambr: measurement(6), ul_ambr: measurement(7) })], { optional: true, requiresValidation: true, reference: '3GPP TS 27.007; not listed in the downloaded Quectel V1.2 manual. Disabled until device support is confirmed.' }),
     smsPduMode: write('AT+CMGF=0', {}, []),
     smsList: query('AT+CMGL=4', 10_000, [rule('^\\+CMGL:\\s*(.*)$', { index: field(0, 'number'), storage_status: field(1, 'number') })], { allowEmpty: true, timeoutMs: 15_000, note: 'PDU body on the following line is decoded by the shared SMS codec; only read on explicit SMS page demand.' }),
-    smsDelete: write('AT+CMGD={index}', { index: '[1-9][0-9]{0,4}' }, ['smsList']),
+    smsStorageSelect: write('AT+CPMS="{memory}"', { memory: 'ME|SM' }, ['smsList'], { note: 'Select mem1 before indexed deletion. Require +CPMS and final OK; never use bulk CMGD flags.' }),
+    smsDelete: write('AT+CMGD={index},0', { index: '[0-9]{1,5}' }, ['smsList'], { note: 'Delete only this verified index in selected mem1; never all messages. Index 0 is used by RM500Q ME storage.' }),
     smsSend: write('AT+CMGS={length}', { length: '[1-9][0-9]{0,2}' }, ['smsList'], { timeoutMs: 120_000, note: 'Await > prompt, send validated TPDU plus Ctrl-Z, require +CMGS and final OK. Never retry automatically.' }),
   },
 }

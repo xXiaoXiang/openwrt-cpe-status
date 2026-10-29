@@ -55,6 +55,9 @@ function check(value,message) {if(!value)die(message);}
 const sim=readJSON(directory+'/sim-identity.json'), raw='+CGDCONT: 1,"IP","global.apn","0.0.0.0"\n+CGACT: 1,1\n';
 let identity=apnActiveIdentity(); apnSaveActive(raw,identity);
 check(apnCachedActive()?.active_apn=='global.apn','current APN result did not cache');
+let afterProfileSwitch=apnActive('+CGDCONT: 1,"IP",""\n+CGDCONT: 2,"IP","global.apn","0.0.0.0"\n+CGACT: 1,1\n+CGACT: 2,1\n');
+check(afterProfileSwitch.active===true && afterProfileSwitch.active_apn=='global.apn','empty APN context after profile switch blocked valid active APN');
+check(apnActive('+CGDCONT: 1,"IP",""\n+CGACT: 1,1\n').active===false,'empty APN context was presented as an active APN');
 check(apnActive('+CGDCONT: 1,"IP","old.profile.apn","0.0.0.0"\n+CGACT: 1,1\n').active===false,'old single PDP context was labelled current');
 save(directory+'/sim-identity.json',{...sim,iccid:'8985200999999999999'});
 check(!apnCachedActive(),'old ICCID active APN leaked');

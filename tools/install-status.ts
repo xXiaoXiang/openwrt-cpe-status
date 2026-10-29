@@ -26,15 +26,38 @@ const persistentHashes = () => {
   }))
 }
 const persistentBefore = persistentHashes()
+const previousDefaults = Object.fromEntries(ssh('cat /lib/apk/packages/luci-app-cpe-status.conffiles_static 2>/dev/null || true').trim().split('\n').flatMap(line => {
+  const match = /^(\/etc\/cpe-status\/[a-zA-Z0-9_./-]+) ([a-f0-9]{64})$/.exec(line)
+  return match ? [[match[1],match[2]]] : []
+}))
+const smsBefore = new Map<string,{ records: Record<string,unknown>[] }>()
+for (const path of Object.keys(persistentBefore)) if (/^\/etc\/cpe-status\/[a-zA-Z0-9_./-]+\/cpe-sms-history\.json$/.test(path)) smsBefore.set(path,JSON.parse(ssh(`cat ${path}`)))
 execFileSync('scp', ['-O', ...sshOptions, apk, `${router}:/root/${name}`], { stdio: 'inherit', windowsHide: true })
 const verified = ssh(`sha256sum /root/${name}`).trim().split(/\s+/)[0]
 if (verified !== sha256) throw new Error('Router APK checksum mismatch')
 console.log(ssh(`apk add --network=no --allow-untrusted${reinstall} /root/${name}\napk list --installed luci-app-cpe-status`))
 const persistentAfter = persistentHashes()
+const updatedDefaults: string[] = [], migratedArchives: string[] = []
+const smsIdentity = (row: Record<string,unknown>) => {
+  const memory = row.memory || /^[^:]+:(ME|SM):/.exec(String(row.key))?.[1] || 'ME'
+  return JSON.stringify([row.direction,memory,memory==='SM' ? row.sim : null,row.phone_number,row.timestamp,row.content,row.reference??null,row.part??null,row.total??null])
+}
 for (const [path, hash] of Object.entries(persistentBefore)) {
   const destination = path === '/etc/cpe-status.json' ? (persistentBefore['/etc/cpe-status/config.json'] ? '/etc/cpe-status/legacy/cpe-status.json' : '/etc/cpe-status/config.json') : path
   const actual = destination.includes('/legacy/') ? ssh(`sha256sum ${destination}`).trim().split(/\s+/)[0] : persistentAfter[destination]
-  if (actual !== hash) throw new Error('Persistent configuration changed during upgrade: ' + destination)
+  if (actual !== hash) {
+    if (previousDefaults[path] === hash && createHash('sha256').update(await readFile('build/openwrt-status-package/files'+path)).digest('hex') === actual) {
+      updatedDefaults.push(path);continue
+    }
+    if (smsBefore.has(path)) {
+      const backup=path.replace(/\.json$/,'.pre-v2.json'), archived=persistentAfter[backup]
+      const current=JSON.parse(ssh(`cat ${path}`)) as {version:number;records:Record<string,unknown>[]}
+      if (archived===hash && current.version===2 && smsBefore.get(path)!.records.every(row=>current.records.some(candidate=>smsIdentity(candidate)===smsIdentity(row) && (row.status!=='read' || candidate.status==='read')))) {
+        migratedArchives.push(path);continue
+      }
+    }
+    throw new Error('Persistent configuration changed during upgrade: ' + destination)
+  }
 }
 const after = untouched()
 if (before !== after) throw new Error('Unexpected configuration change outside network.wwan')
@@ -52,6 +75,6 @@ uci -q get network.wwan.apn
 uci -q get network.wwan.modes
 ubus -S call network.interface.wwan status
 `)
-await writeFile('build/router-audit/installed-services.json', JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: before === after, persistentFilesPreserved: Object.keys(persistentBefore).length, persistentBefore, persistentAfter, summary }, null, 2))
+await writeFile('build/router-audit/installed-services.json', JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: before === after, persistentFilesPreserved: Object.keys(persistentBefore).length-updatedDefaults.length-migratedArchives.length, updatedDefaults, migratedArchives, persistentBefore, persistentAfter, summary }, null, 2))
 console.log(summary)
-console.log(JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: true, persistentFilesPreserved: Object.keys(persistentBefore).length }))
+console.log(JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: true, persistentFilesPreserved: Object.keys(persistentBefore).length-updatedDefaults.length-migratedArchives.length,updatedDefaults,migratedArchives }))

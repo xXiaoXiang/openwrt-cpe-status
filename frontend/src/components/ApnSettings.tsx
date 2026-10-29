@@ -128,7 +128,6 @@ export default function ApnSettings() {
     {status?.database && <Typography variant="caption" color="text.secondary">数据库：{status.database.version} · {status.database.count} 条</Typography>}
     {status?.protocol_fallback && <Typography variant="caption" color="text.secondary">{status.protocol_fallback.user_override ? '已记录 IPv4 回退，当前优先使用自定义协议' : status.protocol_fallback.testing ? '正在验证 IPv4 连接' : '已记住此运营商/APN 使用 IPv4'}</Typography>}
     <Stack direction="row" gap={1} flexWrap="wrap" alignItems="center" data-active-apn>
-      <Typography variant="body2">当前APN</Typography>
       {status?.active_supported === false ? <Typography color="text.secondary">-</Typography> : status?.sampled_at ? <Chip size="small" label={status.active ? `APN: ${status.active_apn || '—'} 已激活` : '未激活'} sx={status.active ? theme=>({bgcolor:theme.palette.mode==='dark' ? theme.palette.success.dark : theme.palette.success.main,color:'#fff'}) : undefined} /> : <CircularProgress size={16} aria-label="读取APN" />}
       {status?.active && <Chip size="small" variant="outlined" label={`协议: ${{ IP: 'IPv4', IPV6: 'IPv6', IPV4V6: 'IPv4/IPv6' }[status.active_protocol?.toUpperCase() || ''] || status.active_protocol || '—'}`} />}
     </Stack>
@@ -155,8 +154,10 @@ export default function ApnSettings() {
           })] : []
         })}
       </TextField>
-      <TextField label="APN 名称" value={form.apn} fullWidth disabled={saving || deleting} onChange={event => update('apn', event.target.value)} helperText="运营商提供的接入点名称" />
-      <TextField select label="IP 协议" value={form.pdptype} fullWidth disabled={saving || deleting} onChange={event => update('pdptype', event.target.value)}><MenuItem value="ipv4">IPv4</MenuItem><MenuItem value="ipv6">IPv6</MenuItem><MenuItem value="ipv4v6">IPv4v6（双栈）</MenuItem></TextField>
+      <Box data-apn-fields sx={{ display:'grid',gridTemplateColumns:'minmax(0, 1fr) minmax(0, 1fr)',gap:2 }}>
+        <TextField label="APN 名称" value={form.apn} fullWidth disabled={saving || deleting} onChange={event => update('apn', event.target.value)} helperText="运营商提供的接入点名称" />
+        <TextField select label="IP 协议" value={form.pdptype} fullWidth disabled={saving || deleting} onChange={event => update('pdptype', event.target.value)}><MenuItem value="ipv4">IPv4</MenuItem><MenuItem value="ipv6">IPv6</MenuItem><MenuItem value="ipv4v6">IPv4v6（双栈）</MenuItem></TextField>
+      </Box>
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
         <TextField label="用户名" value={form.username} fullWidth disabled={saving || deleting} onChange={event => update('username', event.target.value)} placeholder="可选" autoComplete="off" />
         <TextField label="密码" type="password" value={form.password} fullWidth disabled={saving || deleting} onChange={event => update('password', event.target.value)} placeholder="可选" autoComplete="new-password" />

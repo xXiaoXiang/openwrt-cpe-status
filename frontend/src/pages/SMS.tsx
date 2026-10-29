@@ -43,14 +43,14 @@ import {
   ArrowBack,
   Add,
   DeleteSweep,
+  CleaningServices,
 } from '@mui/icons-material'
-import SmsStorage from '../components/SmsStorage'
 import { api, type SmsMessage, type SmsStats } from '../api'
 import { useRefreshInterval } from '../contexts/RefreshContext'
 import { useAdaptivePolling } from '../hooks/useAdaptivePolling'
 import { useSingleFlight } from '../hooks/useSingleFlight'
 import { useCapabilities } from '../contexts/CapabilitiesContext'
-import { featureEnabled } from '../../../shared/availability.ts'
+import { featureEnabled, operationSupported } from '../../../shared/availability.ts'
 
 interface ConversationGroup {
   phoneNumber: string
@@ -80,6 +80,7 @@ export default function SMSPage() {
   const [clearDialogOpen, setClearDialogOpen] = useState(false)
   const [newChatDialogOpen, setNewChatDialogOpen] = useState(false)
   const [newChatNumber, setNewChatNumber] = useState('')
+  const [cleanupConfirm, setCleanupConfirm] = useState(false), [cleanupLoading, setCleanupLoading] = useState(false)
   
   // 对话状态
   const [conversations, setConversations] = useState<ConversationGroup[]>([])
@@ -103,7 +104,15 @@ export default function SMSPage() {
     if (initial) setLoading(true)
     if (initial || manual) setError(null)
     try {
-      const response = await api.getSmsList({ limit: 100, offset: 0 })
+      let response = await api.getSmsList({ limit: 1000, offset: 0 })
+      const visible = !document.hidden && (window.parent === window || !!window.frameElement?.getClientRects().length)
+      if (visible && capabilities?.status_only && response.status === 'ok' && selectedConversationRef.current) {
+        const unread = response.data?.filter(row => row.phone_number === selectedConversationRef.current && row.direction === 'incoming' && row.status === 'received') ?? []
+        if (unread.length) {
+          const marked = await api.markSmsRead(unread.flatMap(row => row.archive_ids ?? [row.id]).slice(0,1000))
+          if (marked.status === 'ok') response = marked
+        }
+      }
       if (response.status === 'ok' && response.data) {
         const payload = JSON.stringify(response.data)
         if (payload !== listPayload.current) {
@@ -120,7 +129,7 @@ export default function SMSPage() {
       listLoaded.current = true
       setLoading(false)
     }
-  }), [run])
+  }), [run, capabilities?.status_only])
 
   // 按联系人分组对话
   const groupConversations = (msgs: SmsMessage[]) => {
@@ -219,6 +228,23 @@ export default function SMSPage() {
     setSelectedConversation(phone)
     setPhoneNumber(phone)
     void fetchConversation(phone)
+    if (capabilities?.status_only) void fetchMessages()
+  }
+
+  const handleCleanup = async () => {
+    if (!cleanupConfirm) { setCleanupConfirm(true); return }
+    setCleanupConfirm(false); setCleanupLoading(true); setError(null)
+    try {
+      let result = await api.cleanupSimSms(true)
+      const deadline = Date.now() + 300_000
+      while (result.status === 'pending' && Date.now() < deadline) {
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
+        result = await api.cleanupSimSms()
+      }
+      if (result.status !== 'ok') throw new Error(result.message || '清理仍在后台进行，请稍后刷新')
+      setSuccess(result.message || `已清理 ${result.data?.deleted ?? 0} 条短信，路由器历史保留`)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { setCleanupLoading(false) }
   }
 
   // 返回对话列表
@@ -393,12 +419,13 @@ export default function SMSPage() {
                 onClick={() => handleSelectConversation(conv.phoneNumber)}
                 selected={selectedConversation === conv.phoneNumber}
               >
-                <Avatar sx={{ mr: 2, bgcolor: 'primary.light' }}><Person /></Avatar>
+                <Badge data-sms-unread badgeContent={conv.unreadCount} invisible={conv.unreadCount === 0} color="primary" max={99} overlap="circular" sx={{ mr: 2 }}>
+                  <Avatar sx={{ bgcolor: 'primary.light' }}><Person /></Avatar>
+                </Badge>
                 <ListItemText
                   primary={
                     <Box display="flex" alignItems="center" gap={1}>
                       <Typography fontWeight={600}>{conv.phoneNumber}</Typography>
-                      <Badge badgeContent={conv.messages.length} color="primary" max={99} />
                     </Box>
                   }
                   secondary={
@@ -579,7 +606,15 @@ export default function SMSPage() {
         {!smsSupported && <Typography color="text.secondary">-</Typography>}
       </Box>
 
-      <SmsStorage />
+      {capabilities?.status_only && <Box sx={{ display:'flex', gap:1, alignItems:'center', flexWrap:'wrap', mb:2 }}>
+        <Button data-sms-cleanup color="error" variant="outlined" size="small" startIcon={cleanupLoading ? <CircularProgress size={16} color="inherit" /> : <CleaningServices />}
+          disabled={cleanupLoading || !smsSupported || !capabilities.writes_enabled || (!!profile && (!operationSupported(profile,'smsDelete') || !operationSupported(profile,'smsStorageSelect')))}
+          onClick={() => void handleCleanup()}>
+          {cleanupLoading ? '清理中' : cleanupConfirm ? '确认清理已读短信' : '清理模块/SIM短信'}
+        </Button>
+        {cleanupConfirm && <Button size="small" onClick={() => setCleanupConfirm(false)}>取消</Button>}
+        <Typography variant="caption" color="text.secondary">仅清理已归档且已读的短信，保留路由器历史。</Typography>
+      </Box>}
       {/* 错误和成功提示 */}
       <Snackbar open={!!error} autoHideDuration={4000} onClose={() => setError(null)} anchorOrigin={{ vertical: 'top', horizontal: 'center' }}>
         <Alert severity="error" onClose={() => setError(null)} variant="filled">{error}</Alert>

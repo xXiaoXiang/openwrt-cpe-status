@@ -132,7 +132,11 @@ adapters/rm500q-profile.ts 是维护者生成默认配置的 TypeScript 参考�
 - **/usr/share/cpe-status/apns.json**：运行时内置库，由项目内 data/apn-database.ts 生成，包含 GNOME MBPI + AOSP 数据；无需首次联网更新即可匹配。
 - **/usr/share/cpe-status/apn-database-base.json**：内置数据库版本、条目数、上游摘要及安装文件校验值。
 - **/usr/share/cpe-status/apns-conf_8.xml**：原有 AOSP XML 留作参考；当前内置库不再由此 XML 生成，只改设备上的 XML 不会改变运行时 JSON。
-- **/etc/cpe-status/sms**：默认短信归档；短信页可改为持久挂载磁盘路径。
+- **/etc/cpe-status/sms**：默认短信归档；“插件设置”页可改为持久挂载磁盘路径。
+
+插件设置使用原生 LuCI，集中管理服务启动/停止、开机自启、重启、短信目录和存储检测。短信已读状态保存在归档内；会话头像只显示未读角标。ME 短信按发送人、原始时间、正文和分段信息去重，不随换 SIM 或槽号变化重复归档；SM 额外区分 ICCID。首次升级归档格式前保存 cpe-sms-history.pre-v2.json 备份，原有本地清空记录仍生效。
+
+短信页“清理模块/SIM短信”需要二次确认，只清理已经归档且用户已读的条目。依据官方 RM5xxQ AT 手册 V1.2 §8.4/8.5，使用 AT+CPMS="ME" 或 "SM" 仅选择读删存储 mem1，再逐条 AT+CMGD=<index>,0；不使用批量删除标志。清理前回读 ICCID、重新比对存储索引与短信内容，成功后再次读取确认，路由器历史保留。每次最多清理 20 个分段，可继续点击；该操作为后台任务，离开页面不取消。
 - **/tmp/cpe-status**：私有运行缓存，重启清空。
 
 本地 APN 扩展示例：

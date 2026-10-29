@@ -1,4 +1,4 @@
-export const packageRelease = 0
+export const packageRelease = 2
 export const packageManifest = {
   name: 'openwrt-modem-monitor', version: '1.3.0', private: true, type: 'module', license: 'GPL-3.0-only',
   engines: { node: '>=24' },

@@ -89,6 +89,8 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     let params: string[]
     if (path === '/api/at' && post && typeof body.cmd === 'string') params = ['at', body.cmd]
     else if (url.pathname === '/api/sms/storage') params = post ? ['config', String(body.path ?? '')] : ['config']
+    else if (url.pathname === '/api/sms/read' && post) params = ['read', JSON.stringify(body.ids ?? [])]
+    else if (url.pathname === '/api/sms/cleanup') params = [post ? 'cleanup-start' : 'cleanup-status']
     else if (url.pathname === '/api/sms/send' && post) {
       if (typeof body.content !== 'string' || !body.content.length || body.content.length > 70 || /[\ud800-\udfff]/.test(body.content)) return response({ status: 'error', message: '请输入 1–70 个字符，不支持 emoji' })
       params = ['send', String(body.phone_number ?? ''), body.content]
@@ -103,10 +105,11 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
       if (value.status !== 'ok') throw new Error(value.message || 'AT 命令未执行')
       return new Response(value.data, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
     }
-    if (value.status === 'ok' && params[0] === 'list') {
+    if (value.status === 'ok' && ['list','read'].includes(params[0])) {
       let records = joinSmsSegments(value.data as ArchivedSms[])
       if (url.pathname.endsWith('/stats')) return response({ status: 'ok', data: { total: records.length, incoming: records.filter(row => row.direction === 'incoming').length, outgoing: records.filter(row => row.direction === 'outgoing').length, unread: records.filter(row => row.status === 'received').length } })
       if (url.pathname.endsWith('/conversation')) records = records.filter(row => row.phone_number === url.searchParams.get('phone_number'))
+      if (params[0] === 'read') return response({ ...value, data: records })
       const offset = Math.max(0, Number(url.searchParams.get('offset')) || 0), limit = Math.min(1000, Math.max(1, Number(url.searchParams.get('limit')) || 100))
       return response({ ...value, data: records.slice(offset, offset + limit) })
     }

@@ -113,7 +113,9 @@ function apnActive(raw) {
   let preferred = apnUci('apn'), contexts = [];
   let active = {};
   for (let row in profileParse('contextsActive', raw)) if (row.active) active[row.cid] = true;
-  for (let row in profileParse('contexts', raw)) if (active[row.cid]) push(contexts, { active: true, active_apn: row.apn, active_protocol: row.protocol, sampled_at: time() });
+  // Firmware may retain an active CID with an empty CGDCONT APN after a
+  // profile switch. It has no APN to report or match to the configured WWAN.
+  for (let row in profileParse('contexts', raw)) if (active[row.cid] && row.apn) push(contexts, { active: true, active_apn: row.apn, active_protocol: row.protocol, sampled_at: time() });
   for (let context in contexts) if (lc(context.active_apn) == lc(preferred)) return context;
   if (!preferred && length(contexts) == 1) return contexts[0];
   return { active: false, sampled_at: time() };

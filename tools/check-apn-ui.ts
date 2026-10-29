@@ -90,6 +90,8 @@ try {
   await until(`document.querySelector('[data-apn-settings] [role="combobox"]') !== null`)
   await until(`document.querySelector('[data-current-operator]')?.textContent==='Lucky2'`)
   assert.equal(await evaluate(`Array.from(document.querySelectorAll('[data-active-apn] .MuiChip-label')).filter(node=>node.textContent.includes('APN:') || node.textContent==='已激活').map(node=>node.textContent).join('|')`),'APN: custom.one 已激活')
+  assert.equal(await evaluate(`document.querySelector('[data-active-apn]')?.textContent.includes('当前APN')`),false,'active APN label should be omitted')
+  assert.equal(await evaluate(`getComputedStyle(document.querySelector('[data-apn-fields]')).gridTemplateColumns.split(' ').length`),2,'APN and IP fields should share a row')
   await evaluate(`document.querySelector('[data-apn-settings] [role="combobox"]').dispatchEvent(new MouseEvent('mousedown',{bubbles:true,button:0}))`)
   await until(`document.querySelectorAll('[role="option"]').length >= 5`)
   const options=await evaluate(`Array.from(document.querySelectorAll('[role="option"]')).map(node=>node.textContent)`)

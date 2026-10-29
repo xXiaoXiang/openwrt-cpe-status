@@ -455,6 +455,14 @@ class CpeStatusAPI {
     return request<ApiResponse<SmsStats>>('/sms/stats')
   }
 
+  async markSmsRead(ids: number[]) {
+    return request<ApiResponse<SmsMessage[]>>('/sms/read', { method: 'POST', body: JSON.stringify({ ids }) })
+  }
+
+  async cleanupSimSms(start = false) {
+    return request<ApiResponse<{ deleted: number; limited?: boolean }>>('/sms/cleanup', start ? { method: 'POST' } : undefined)
+  }
+
   // 清空所有短信
   async clearAllSms() {
     return request<ApiResponse<Record<string, never>>>('/sms/clear', {

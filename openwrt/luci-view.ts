@@ -67,7 +67,45 @@ return view.extend({
       E('div', { 'class':'cpe-service-state' }, [this.statusNode]),
       E('div', { 'class':'cpe-service-actions' }, [this.runButton, this.enableButton, this.restartButton])
     ]);
+    var self = this, loadedSettings = false;
+    var storageInput = E('input', { 'class':'cbi-input-text', type:'text', value:'/etc/cpe-status/sms', style:'width:100%;max-width:560px', 'aria-label':'短信保存目录' });
+    var settingsNotice = E('p', { 'aria-live':'polite' }, '');
+    function messaging(args) {
+      return fs.exec('/usr/libexec/cpe-status/messaging', args).then(function(result) {
+        var response = JSON.parse(result.stdout || '{}');
+        if (result.code !== 0 || response.status !== 'ok') throw new Error(response.message || '短信设置操作失败');
+        return response.data;
+      });
+    }
+    function report(error) { settingsNotice.textContent = error.message || String(error); settingsNotice.style.color = '#d63638'; }
+    function readSettings() {
+      if (loadedSettings) return;
+      messaging(['config']).then(function(data) { storageInput.value = data.path; loadedSettings = true; }).catch(report);
+    }
+    var savePath = E('button', { 'class':'cbi-button cbi-button-save', disabled:!L.hasViewPermission(), click:function() {
+      var button = this; button.disabled = true; button.classList.add('spinning');
+      messaging(['config', storageInput.value]).then(function(data) {
+        storageInput.value = data.path; settingsNotice.textContent = '保存成功，现有历史已复制到新目录'; settingsNotice.style.color = '#269f42';
+      }).catch(report).finally(function() {button.disabled = !L.hasViewPermission();button.classList.remove('spinning');});
+    } }, '保存路径');
+    var checkStorage = E('button', { 'class':'cbi-button cbi-button-action', disabled:!L.hasViewPermission(), click:function() {
+      var button = this; button.disabled = true; button.classList.add('spinning');
+      messaging(['storage-check']).then(function(data) {
+        settingsNotice.textContent = '目录可读写：' + data.path + '；归档记录 ' + data.records + ' 条，未读记录 ' + data.unread + ' 条' + (data.warnings.length ? '；' + data.warnings.join('；') : '');
+        settingsNotice.style.color = data.warnings.length ? '#b7791f' : '#269f42';
+      }).catch(report).finally(function() {button.disabled = !L.hasViewPermission();button.classList.remove('spinning');});
+    } }, '检测短信存储');
+    var settings = E('div', { 'data-cpe-settings':'', style:'display:none' }, [
+      bar,
+      E('div', { 'class':'cbi-section' }, [
+        E('h3', {}, '短信存储'),
+        E('div', { 'class':'cbi-value' }, [E('label', { 'class':'cbi-value-title' }, '保存目录'),
+          E('div', { 'class':'cbi-value-field' }, [storageInput, E('div', { 'class':'cbi-value-description' }, '支持挂载磁盘，原历史保留。')])]),
+        E('div', { 'class':'cpe-settings-actions' }, [savePath, checkStorage]), settingsNotice
+      ])
+    ]);
     var pages = [['状态', '/'], ['频段/小区', '/band-lock'], ['运营商/APN', '/operators'], ['AT', '/at-console'], ['短信', '/sms'], ['eUICC', '/euicc']];
+    pages.push(['插件设置', null]);
     var frame = E('iframe', { src:L.resource('cpe-status/index.html')+'?embedded=1&source=quectel#/', title:'CPE Status', style:'width:100%;height:calc(100vh - 165px);min-height:640px;border:0' });
     var items = pages.map(function(page, index) {
       return E('li', { 'class':index === 0 ? 'cbi-tab' : 'cbi-tab-disabled', role:'presentation', style:page[1] === '/euicc' ? 'display:none' : '' }, [
@@ -75,7 +113,12 @@ return view.extend({
           event.preventDefault();
           items.forEach(function(item) { item.className = 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected','false'); });
           this.parentNode.className = 'cbi-tab'; this.setAttribute('aria-selected','true');
-          frame.contentWindow.location.hash = page[1];
+          var isSettings = page[1] === null;
+          frame.style.display = isSettings ? 'none' : '';
+          settings.style.display = isSettings ? '' : 'none';
+          self.settingsActive = isSettings;
+          if (isSettings) { readSettings(); self.refreshStatus(); }
+          else frame.contentWindow.location.hash = page[1];
         } }, page[0])
       ]);
     });
@@ -83,14 +126,14 @@ return view.extend({
     this.euiccListener = function(event) {
       if (event.origin !== window.location.origin || event.source !== frame.contentWindow || event.data?.type !== 'cpe-status-euicc' || typeof event.data.available !== 'boolean') return;
       items[5].style.display = event.data.available ? '' : 'none';
-      if (!event.data.available && frame.contentWindow.location.hash === '#/euicc') {
+      if (!event.data.available && !self.settingsActive && frame.contentWindow.location.hash === '#/euicc') {
         frame.contentWindow.location.hash = '/';
         items.forEach(function(item,index) { item.className = index === 0 ? 'cbi-tab' : 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected',index === 0 ? 'true' : 'false'); });
       }
     };
     window.addEventListener('message', this.euiccListener);
-    poll.add(L.bind(this.refreshStatus, this), 5);
-    return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex:0 0 auto;max-width:100%;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex:0 0 auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}.cpe-service-actions button{white-space:nowrap}'), bar, E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
+    poll.add(function() { if (self.settingsActive) return self.refreshStatus(); }, 5);
+    return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex:0 0 auto;max-width:100%;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex:0 0 auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}.cpe-service-actions button{white-space:nowrap}.cpe-settings-actions{display:flex;gap:8px;flex-wrap:wrap}'), E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame, settings]);
   }, handleSave:null, handleSaveApply:null, handleReset:null
 });
 `

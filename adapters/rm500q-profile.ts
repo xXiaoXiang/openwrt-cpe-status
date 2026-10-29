@@ -7,6 +7,7 @@ const f = (index: number, type: 'number' | 'string' | 'hex' = 'string', extra = 
 const r = (regex: string, fields: ReplyRule['fields'], constants?: ReplyRule['constants']): ReplyRule => ({ regex, format: 'csv', fields, constants })
 const query = (command: string, rules: ReplyRule[], extra = {}): CommandDefinition => ({ command, kind: 'read', ttlMs: 86400000, timeoutMs: 5000, rules, reference: 'Quectel RM5xxQ AT manual / 3GPP TS 27.007', ...extra })
 const commands = structuredClone(rm500q.commands)
+commands.contexts.rules[0].fields.apn.optional = true
 commands.modeSet.parameterValues = { mode: ['AUTO', 'LTE:NR5G', 'LTE', 'NR5G', 'WCDMA:LTE', 'WCDMA'] }
 commands.roamingSet.parameterValues = { preference: ['1', '255'] }
 commands.model.rules = [{ regex: '^(RM500Q-GL)$', format: 'captures', fields: { model: f(0) } }]
@@ -33,6 +34,7 @@ for (const command of Object.values(commands)) {
   for (const [name, pattern] of Object.entries(command.parameters ?? {})) command.parameters![name] = pattern.replaceAll('(?:', '(')
   command.output = command.rules.length ? command.rules.map((rule, index) => `规则${index + 1}: array<{${[...Object.entries(rule.constants ?? {}).map(([key,value]) => key + ':' + JSON.stringify(value)), ...Object.entries(rule.fields).map(([key,field]) => key + ':' + (field.map ? typeof Object.values(field.map)[0] : field.type === 'hex' ? 'number' : field.type ?? 'string') + (field.optional ? '|null' : ''))].join(',')}}>`).join('; ') : '写操作返回后仍需查询对应读取操作，比对实际状态；不单凭OK报告成功。'
 }
+commands.contexts.output = '规则1: array<{cid:number,protocol:string,apn:string|null,address:string|null}>'
 
 export const rm500qProfile: ModemProfile = {
   ...structuredClone(rm500q), id: 'quectel-rm500q-gl', firmwareBaseline: 'R11 baseline; validated with RM500QGLABR13A03M4G', commands,

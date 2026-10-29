@@ -4,7 +4,7 @@
 
 LuCI → Modem → CPE Status：**状态、频段/小区、运营商/APN、AT、短信、eUICC**。eUICC 入口仅在已安装 lpac 且检测到有效 EID 后显示。浏览器运行 React；路由器使用 ucode / rpcd / netifd，无需 Node.js。ImmortalWrt 25.12.2 已完成 SDK APK 构建及 RM500Q-GL R13 实机读取验证。
 
-公开仓库：https://github.com/xXiaoXiang/openwrt-cpe-status 。当前发布 v1.3.0，对应软件包 1.3.0-r0；版本与包修订号取自 project.ts。历史界面和行为基线可查看保留的 v0.3.0 标签。
+公开仓库：https://github.com/xXiaoXiang/openwrt-cpe-status 。当前发布 v1.3.0，对应软件包 1.3.0-r2；版本与包修订号取自 project.ts。历史界面和行为基线可查看保留的 v0.3.0 标签。
 
 LuCI 顶部显示 CPE 服务运行及开机自启状态，提供启动/停止、启用/禁用自启和重启；空间不足时自动分行。运行状态包含自动 APN、网速采样、短信同步及可选 QoS 监听四个后台任务，部分任务退出时显示“部分运行”。每5秒读取 procd 状态，不访问 Modem。禁用自启只影响下次开机；停止只结束本插件的后台任务，不执行 ifdown。服务控制使用专用写权限入口，只接受本插件服务的固定操作；只读账户仅能查看状态。升级保留已有自启设置。
 
@@ -22,7 +22,7 @@ npm run build
 
 将 build/openwrt-status-package 复制到 OpenWrt / ImmortalWrt SDK 的 package/luci-app-cpe-status，执行 make package/luci-app-cpe-status/compile V=s。包依赖 luci-base、rpcd-mod-file、ucode、ucode-mod-fs、ucode-mod-ubus、sms-tool、comgt、adb，以及系统自带的 BusyBox sha256sum。build/openwrt-package 是保留的早期 Node 原型，不是当前推荐安装包。
 
-tools/package-status-sdk.ts 的 start、status、fetch 接受第二个参数 aarch64_cortex-a53 或 x86_64，分别使用编译机上独立的 ImmortalWrt 25.12.2 SDK。产物保存到 build/sdk-test/<架构>/，APK 文件名添加对应架构后缀；包内名称和版本为 luci-app-cpe-status / 1.3.0-r0。SDK 下载必须与官方 SHA256 一致。ARM 对应 mediatek/filogic，x86_64 对应 x86/64；后者目前仅完成 SDK 构建与包检查，未实机运行。
+tools/package-status-sdk.ts 的 start、status、fetch 接受第二个参数 aarch64_cortex-a53 或 x86_64，分别使用编译机上独立的 ImmortalWrt 25.12.2 SDK。产物保存到 build/sdk-test/<架构>/，APK 文件名添加对应架构后缀；包内名称和版本为 luci-app-cpe-status / 1.3.0-r2。SDK 下载必须与官方 SHA256 一致。ARM 对应 mediatek/filogic，x86_64 对应 x86/64；后者目前仅完成 SDK 构建与包检查，未实机运行。
 
 tools/publish-release.ts v1.3.0 <发布说明文件或-> all 可发布两个架构，或将 all 改为单个架构；追加 --include-lpac 同时发布经校验的 curl/HTTPS lpac 包及对应源码。已有无架构后缀的 ARM 附件仅在摘要匹配后改名，保留原附件记录；不覆盖摘要不同的已有附件；显式指定 --prune-old-apks 时，在新包校验通过后删除同版本、所选架构的旧 APK 附件。tools/install-status.ts 默认安装 ARM 包，带架构后缀时先核对目标路由器 /etc/apk/arch 中配置的软件包架构。
 
@@ -130,7 +130,11 @@ adapters/rm500q-profile.ts 是维护者生成默认配置的 TypeScript 参考�
 - **/usr/share/cpe-status/apns.json**：运行时内置库，由项目内 data/apn-database.ts 生成，包含 GNOME MBPI + AOSP 数据；无需首次联网更新即可匹配。
 - **/usr/share/cpe-status/apn-database-base.json**：内置数据库版本、条目数、上游摘要及安装文件校验值。
 - **/usr/share/cpe-status/apns-conf_8.xml**：原有 AOSP XML 留作参考；当前内置库不再由此 XML 生成，只改设备上的 XML 不会改变运行时 JSON。
-- **/etc/cpe-status/sms**：默认短信归档；短信页可改为持久挂载磁盘路径。
+- **/etc/cpe-status/sms**：默认短信归档；“插件设置”页可改为持久挂载磁盘路径。
+
+插件设置使用原生 LuCI，集中管理服务启动/停止、开机自启、重启、短信目录和存储检测。短信已读状态保存在归档内；会话头像只显示未读角标。ME 短信按发送人、原始时间、正文和分段信息去重，不随换 SIM 或槽号变化重复归档；SM 额外区分 ICCID。首次升级归档格式前保存 cpe-sms-history.pre-v2.json 备份，原有本地清空记录仍生效。
+
+短信页“清理模块/SIM短信”需要二次确认，只清理已经归档且用户已读的条目。依据官方 RM5xxQ AT 手册 V1.2 §8.4/8.5，使用 AT+CPMS="ME" 或 "SM" 仅选择读删存储 mem1，再逐条 AT+CMGD=<index>,0；不使用批量删除标志。清理前回读 ICCID、重新比对存储索引与短信内容，成功后再次读取确认，路由器历史保留。每次最多清理 20 个分段，可继续点击；该操作为后台任务，离开页面不取消。
 - **/tmp/cpe-status**：私有运行缓存，重启清空。
 
 本地 APN 扩展示例：

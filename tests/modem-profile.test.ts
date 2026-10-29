@@ -32,6 +32,13 @@ test('ICCID filler F is excluded so 19-digit eUICC profiles share the same SIM/A
   assert.throws(() => parseReply(operation, '+QCCID: 8985203000000000001F12'))
   assert.throws(() => parseReply(operation, '+QCCID: 8985203000000000001FF'))
 })
+
+test('CGDCONT empty APN fields are valid after profile changes', () => {
+  const operation = rm500qProfile.commands.contexts
+  assert.deepEqual(parseReply(operation, '+CGDCONT: 1,"IP",""'), [{ cid: 1, protocol: 'IP', apn: null, address: null }])
+  assert.deepEqual(parseReply(operation, '+CGDCONT: 1,"IP"'), [{ cid: 1, protocol: 'IP', apn: null, address: null }])
+  assert.deepEqual(parseReply(operation, '+CGDCONT: 2,"IP","internet","0.0.0.0"'), [{ cid: 2, protocol: 'IP', apn: 'internet', address: '0.0.0.0' }])
+})
 test('configured lock extraction verifies tuple count and configured parameters set allowed SCS', () => {
   const rows = parseReply(rm500qProfile.commands.lteCellLock, '+QNWLOCK: "common/4g",2,1400,366,3349,323')
   assert.deepEqual(rows, [{ rat: 'lte', arfcn: 1400, pci: 366 }, { rat: 'lte', arfcn: 3349, pci: 323 }])

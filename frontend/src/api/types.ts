@@ -484,6 +484,7 @@ export interface SmsMessage {
   timestamp: string // ISO 8601 时间
   status: string // 状态: pending, sent, failed, received
   pdu?: string // 原始 PDU（可选）
+  archive_ids?: number[] // 分段短信的本地归档 ID
 }
 
 // 发送短信请求

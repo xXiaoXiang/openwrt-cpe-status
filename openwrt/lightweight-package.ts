@@ -35,7 +35,7 @@ export async function generateLightweightPackage(root: string) {
     const profile = JSON.parse(contents) as ModemProfile
     validateAdapter(profile)
     if (!profile.usbIds?.includes(name.slice(0, 8))) throw new Error(`Profile USB ID mismatch: ${name}`)
-    await write(`files/etc/cpe-status/modem.d/${name}`, contents)
+    await write(`files/etc/cpe-status/modem.d/${name}`, JSON.stringify(profile, null, 2) + '\n')
   }
   await write('files/etc/cpe-status/apns.local.json', JSON.stringify({ _comment: '用户 APN 扩展，优先于内置数据库；字段 carrier,mcc,mnc,apn,protocol,user,password,authtype,mvno_type,mvno_match_data；MCC/MNC须为字符串保留前导零。网页各SIM设置优先级更高。', apns: [] }, null, 2) + '\n')
   await write('files/usr/libexec/cpe-status/snapshot', statusCollector)

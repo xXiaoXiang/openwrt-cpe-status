@@ -6,9 +6,10 @@ import { packageManifest, packageRelease } from '../project.ts'
 import { sdkTargets, sdkArchitecture, apkFilename, type SdkArchitecture } from './sdk-targets.ts'
 
 const version = process.argv[2]
-if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('Usage: publish-release.ts vX.Y.Z [notes-file|-] [aarch64_cortex-a53|x86_64|all] [--prune-old-apks] [--include-lpac]')
+if (!/^v\d+\.\d+\.\d+$/.test(version ?? '')) throw new Error('Usage: publish-release.ts vX.Y.Z [notes-file|-] [aarch64_cortex-a53|x86_64|all] [--prune-old-apks] [--include-lpac] [--replace-checksums]')
 const pruneOldApks = process.argv.includes('--prune-old-apks')
 const includeLpac = process.argv.includes('--include-lpac')
+const replaceChecksums = process.argv.includes('--replace-checksums')
 const revision = version.slice(1) === packageManifest.version ? packageRelease : 0
 const architectures = process.argv[4] === 'all' ? Object.keys(sdkTargets) as SdkArchitecture[] : [sdkArchitecture(process.argv[4])]
 const apks = await Promise.all(architectures.map(async architecture => {
@@ -75,9 +76,39 @@ async function verify(asset: ReleaseAsset, expected: string) {
   }
   if (digest !== 'sha256:' + expected) throw new Error('Existing release asset checksum mismatch: ' + asset.name)
 }
+async function uploadArtifact(item: { name: string; apk: Buffer; hash: string }, name = item.name) {
+  const upload = await fetch(release.upload_url.split('{')[0] + '?name=' + encodeURIComponent(name), { method:'POST', headers: { ...headers, 'Content-Type':'application/octet-stream' }, body: new Uint8Array(item.apk) })
+  if (!upload.ok) throw new Error(`Asset upload failed (${name}): ${upload.status}`)
+  const asset = await upload.json() as ReleaseAsset
+  await verify(asset,item.hash)
+  return asset
+}
+async function renameAsset(asset: ReleaseAsset, name: string) {
+  const result = await fetch(`${endpoint}/assets/${asset.id}`, {method:'PATCH',headers,body:JSON.stringify({name})})
+  if (!result.ok) throw new Error(`Asset rename failed (${name}): ${result.status}`)
+  return await result.json() as ReleaseAsset
+}
 for (const item of artifacts) {
   const current = existing.find(asset => asset.name === item.name)
-  if (current) { await verify(current, item.hash); continue }
+  if (current) {
+    if (item.name !== 'SHA256SUMS' || !replaceChecksums) { await verify(current,item.hash);continue }
+    try { await verify(current,item.hash);continue } catch(error) {
+      if (!(error instanceof Error) || !error.message.startsWith('Existing release asset checksum mismatch:')) throw error
+    }
+    // All APKs precede the manifest and have already passed digest checks.
+    // Stage and verify its replacement before removing any published file.
+    const name = 'SHA256SUMS.pending-' + item.hash.slice(0,12)
+    const staged = existing.find(asset => asset.name === name) || await uploadArtifact(item,name)
+    await verify(staged,item.hash)
+    const backup = await renameAsset(current,'SHA256SUMS.previous-' + current.id)
+    let renamed: ReleaseAsset
+    try { renamed = await renameAsset(staged,item.name) }
+    catch(error) { await renameAsset(backup,item.name);throw error }
+    await verify(renamed,item.hash)
+    const deleted = await fetch(`${endpoint}/assets/${backup.id}`,{method:'DELETE',headers})
+    if (!deleted.ok) throw new Error(`Cannot remove previous checksum manifest: ${deleted.status}`)
+    continue
+  }
   const legacy = 'architecture' in item && item.architecture === 'aarch64_cortex-a53' ? existing.find(asset => asset.name === `luci-app-cpe-status-${version.slice(1)}-r${revision}.apk`) : undefined
   if (legacy) {
     await verify(legacy, item.hash)
@@ -85,8 +116,7 @@ for (const item of artifacts) {
     if (!renamed.ok) throw new Error(`APK rename failed: ${renamed.status}`)
     continue
   }
-  const upload = await fetch(release.upload_url.split('{')[0] + '?name=' + encodeURIComponent(item.name), { method:'POST', headers: { ...headers, 'Content-Type':'application/octet-stream' }, body: new Uint8Array(item.apk) })
-  if (!upload.ok) throw new Error(`APK upload failed: ${upload.status}`)
+  await uploadArtifact(item)
 }
 const finalAssets = await fetch(`${endpoint}/${release.id}/assets`, { headers })
 if (!finalAssets.ok) throw new Error(`Cannot verify release assets: ${finalAssets.status}`)
