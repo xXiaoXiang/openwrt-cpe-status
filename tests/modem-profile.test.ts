@@ -24,6 +24,14 @@ test('snapshot parses a different model and temperature layout entirely from sel
   assert.equal((routes['/api/device'].data as { model: string }).model, 'Example-X')
   assert.deepEqual((routes['/api/stats'].data as { temperature: unknown[] }).temperature, [{ zone: 'modem-chip', type: 'chip', temperature: 43.5 }])
 })
+
+test('ICCID filler F is excluded so 19-digit eUICC profiles share the same SIM/APN identity', () => {
+  const operation = rm500qProfile.commands.iccid
+  for (const suffix of ['', 'F', 'f']) assert.deepEqual(parseReply(operation, '+QCCID: 8985203000000000001' + suffix), [{ iccid: '8985203000000000001' }])
+  assert.deepEqual(parseReply(operation, '+QCCID: 89852000000000000002'), [{ iccid: '89852000000000000002' }])
+  assert.throws(() => parseReply(operation, '+QCCID: 8985203000000000001F12'))
+  assert.throws(() => parseReply(operation, '+QCCID: 8985203000000000001FF'))
+})
 test('configured lock extraction verifies tuple count and configured parameters set allowed SCS', () => {
   const rows = parseReply(rm500qProfile.commands.lteCellLock, '+QNWLOCK: "common/4g",2,1400,366,3349,323')
   assert.deepEqual(rows, [{ rat: 'lte', arfcn: 1400, pci: 366 }, { rat: 'lte', arfcn: 3349, pci: 323 }])

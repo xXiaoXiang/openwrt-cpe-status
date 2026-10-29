@@ -1,6 +1,8 @@
 import { rm500qProfile } from '../adapters/rm500q-profile.ts'
 import { profileRuntime } from './profile-runtime.ts'
 import { cacheSeconds } from '../shared/cache-policy.ts'
+import { readQueueRuntime } from './read-queue.ts'
+import { modemActivityRuntime } from './modem-activity.ts'
 
 export const statusGroups = rm500qProfile.groups
 
@@ -11,8 +13,8 @@ import { readfile, writefile, mkdir, rmdir, unlink, rename, stat, popen, glob, r
 import { connect } from 'ubus';
 const directory = getenv('CPE_STATUS_CACHE') || '/tmp/cpe-status';
 const cacheSeconds = __CACHE_SECONDS__;
-const script = getenv('CPE_STATUS_SCRIPT') || '/usr/libexec/cpe-status-snapshot';
-const configPath = getenv('CPE_STATUS_CONFIG') || '/etc/cpe-status.json';
+const script = getenv('CPE_STATUS_SCRIPT') || '/usr/libexec/cpe-status/snapshot';
+const configPath = getenv('CPE_STATUS_CONFIG') || '/etc/cpe-status/config.json';
 const pid = +readlink('/proc/self');
 let profile = null, profileKey = '', profileError = '', usbId = '', profileStamp = '';
 function text(path) { return trim(readfile(path) || ''); }
@@ -46,7 +48,7 @@ if (!match(port, /^\/dev\/tty(USB|ACM)[0-9]+$/) || !match(iface, /^[a-zA-Z0-9_]{
 function bounded(cmd, seconds) {
   return command(cmd + ' & child=$!; (sleep ' + seconds + '; kill "$child" 2>/dev/null; sleep 1; kill -9 "$child" 2>/dev/null) >/dev/null 2>&1 & guard=$!; wait "$child"; rc=$?; kill "$guard" 2>/dev/null; wait "$guard" 2>/dev/null; exit "$rc"');
 }
-`.replace('__CACHE_SECONDS__', JSON.stringify(cacheSeconds)) + profileRuntime
+`.replace('__CACHE_SECONDS__', JSON.stringify(cacheSeconds)) + modemActivityRuntime + profileRuntime + readQueueRuntime
 export const statusCollector = statusRuntime + String.raw`if (ARGV[0] == 'profile') { print(sprintf('%J\n', { status: profile ? 'ok' : 'unsupported', data: profile, profile_key: profileKey, usb_id: usbId, device: port, message: profileError })); exit(0); }
 const groups = profile?.groups || {};
 function host(previous, now) {
@@ -69,14 +71,13 @@ function host(previous, now) {
     push(counters, { interface: name, rx, tx });
   }
   let result = { time: now, board, net, networks, network_interface: iface, device_addresses, meminfo: text('/proc/meminfo'), loadavg: text('/proc/loadavg'), uptime: text('/proc/uptime'),
-    cpustat: text('/proc/stat'), cpuinfo: system.cpuinfo, machine: system.machine, disk: command('df -Pk'), counters, thermal: [],
+    cpustat: text('/proc/stat'), cpuinfo: system.cpuinfo, machine: system.machine, disk: bounded('df -Pk', 3), counters, thermal: [],
     previous_counters: previous?.counters || [], previous_time: previous?.time || now };
   return result;
 }
 mkdir(directory, 0700);
 let now = time(), path = directory + '/snapshot.json', previous = readJSON(path);
 if (previous && previous.device != port) previous = null;
-let failure = readJSON(directory + '/failure.json');
 let fresh = previous && now - previous.host.time < cacheSeconds.host;
 let update = ARGV[0] == '--refresh';
 function output(value) {
@@ -87,28 +88,29 @@ function output(value) {
   }
   print(sprintf('%J\n', snapshotPayload(value)));
 }
-if (!update && fresh) { output(previous); exit(0); }
-let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
-if (!mkdir(lock, 0700)) {
-  let owner = +text(lock + '/pid');
-  if ((owner && stat('/proc/' + owner)) || (!owner && now - stat(lock).mtime < 2)) {
-    output(previous || { error: 'ModemReadDeferred: snapshot collection in progress', retry_after_ms: 5000 }); exit(0);
-  }
-  unlink(lock + '/pid'); rmdir(lock);
-  if (!mkdir(lock, 0700)) die('ModemReadDeferred: collector lock busy');
+if (!update) {
+  // Even a cold RPC only enqueues work. It never waits for multiple AT groups.
+  let job = !fresh ? queueRead('snapshot', script) : readJob('snapshot');
+  if (previous) { previous.stale ||= !fresh; output(previous); }
+  else output({ error: 'ModemReadDeferred: ' + (job?.message || 'snapshot collection queued'), ...readProgress(job) });
+  exit(0);
 }
-writefile(lock + '/pid', '' + pid);
-if (!update && previous) {
-  unlink(lock + '/pid'); rmdir(lock);
-  if (!failure || now - failure.time >= cacheSeconds.failure) system(script + ' --refresh </dev/null >/dev/null 2>&1 &');
-  previous.stale = true;
-  output(previous); exit(0);
-}
+let job = beginRead('snapshot', ARGV[1]);
+if (!job) exit(0);
 try {
   if (!profile) die(profileError);
+  // Reload after acquiring the lock: a preceding control may have invalidated
+  // or replaced the cache while this worker was waiting.
+  previous = readJSON(path);
+  if (previous && previous.device != port) previous = null;
   let result = previous && previous.device == port ? previous : { raw: {}, sampled: {}, source: 'modem-profile', device: port };
   result.adapter = profile; result.usb_id = usbId;
+  let yielded = false;
   for (let key, group in groups) {
+    // Finish the current bounded AT group, then checkpoint and yield to a
+    // queued manual read. Remaining groups resume on the next demand refresh.
+    if (manualReadPending()) { yielded = true; break; }
+    now = time();
     // CFUN remains queryable in flight mode. Avoid repeated serving/neighbor
     // queries while RF is off; the API explicitly returns an empty cell list.
     if (key == 'cells' && index(profile.radioStates.off, result.raw.radio ? profileRow('radio', result.raw.radio).functionality : -1) >= 0) continue;
@@ -140,13 +142,10 @@ try {
     if (result.warnings) delete result.warnings[key];
   }
   result.host = host(previous?.host, time());
-  result.stale = length(keys(result.warnings || {})) > 0;
+  result.stale = yielded || length(keys(result.warnings || {})) > 0;
   save(path, result);
-  unlink(directory + '/failure.json');
-  output(result);
+  finishRead(job);
 } catch(e) {
-  save(directory + '/failure.json', { time: time() });
-  output(previous || { error: 'ModemReadDeferred: ' + e, retry_after_ms: 10000 });
+  finishRead(job, '' + e);
 }
-unlink(lock + '/pid'); rmdir(lock);
 `

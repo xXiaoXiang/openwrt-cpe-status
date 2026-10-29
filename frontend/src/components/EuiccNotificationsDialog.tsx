@@ -5,14 +5,16 @@ import {
 } from '@mui/material'
 import { DeleteOutline, ExpandMore, Refresh, Send } from '@mui/icons-material'
 import { api } from '@/api'
-import type { EuiccNotification, EuiccNotificationTarget } from '@/api/types'
+import type { EuiccNotification, EuiccNotificationTarget, EuiccProfile } from '@/api/types'
 import { useSingleFlight } from '../hooks/useSingleFlight'
+import { useCapabilities } from '@/contexts/CapabilitiesContext'
 
 const safeToRemove = (notification: EuiccNotification) =>
   ['enable', 'disable'].includes(notification.profileManagementOperation)
 const operationLabels: Record<string, string> = { enable: '（启用）', disable: '（停用）', delete: '（删除）', install: '（安装）' }
 
-export default function EuiccNotificationsDialog({ onClose }: { onClose: () => void }) {
+export default function EuiccNotificationsDialog({ profiles, onClose }: { profiles: EuiccProfile[]; onClose: () => void }) {
+  const canWrite = useCapabilities()?.writes_enabled === true
   const [notifications, setNotifications] = useState<EuiccNotification[]>([])
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -38,7 +40,7 @@ export default function EuiccNotificationsDialog({ onClose }: { onClose: () => v
   useEffect(() => { void load() }, [load])
 
   const act = async (operation: 'process' | 'remove', target: EuiccNotificationTarget) => {
-    if (busy) return
+    if (busy || !canWrite) return
     setBusy(`${operation}:${target.all ? 'all' : target.seq_number}`)
     setFeedback(null)
     try {
@@ -67,6 +69,9 @@ export default function EuiccNotificationsDialog({ onClose }: { onClose: () => v
   }
 
   const disabled = loading || busy !== null
+  const profileNames = new Map(profiles.map((profile) => [
+    profile.iccid, profile.profileName?.trim() || profile.serviceProviderName?.trim(),
+  ]))
   const groups = new Map<string, EuiccNotification[]>()
   for (const notification of [...notifications].sort((a, b) => a.seqNumber - b.seqNumber)) {
     const group = groups.get(notification.iccid) ?? []
@@ -97,16 +102,18 @@ export default function EuiccNotificationsDialog({ onClose }: { onClose: () => v
             {Array.from(groups, ([iccid, items]) => {
               const expanded = !collapsedGroups.has(iccid)
               const contentId = `euicc-notifications-${iccid}`
+              const name = profileNames.get(iccid)
+              const label = name ? `${name} (ICCID: ${iccid})` : `ICCID: ${iccid}`
               return (
-                <Box component="section" key={iccid} data-notification-group={iccid} aria-label={`ICCID ${iccid}`}>
+                <Box component="section" key={iccid} data-notification-group={iccid} aria-label={label}>
                   <ButtonBase onClick={() => toggleGroup(iccid)} aria-expanded={expanded} aria-controls={contentId}
-                    aria-label={`${expanded ? '折叠' : '展开'} ICCID ${iccid} 的通知`} title={`ICCID：${iccid}`}
+                    aria-label={`${expanded ? '折叠' : '展开'} ${label} 的通知`} title={label}
                     sx={{ display: 'flex', width: '100%', gap: 1, py: 0.75, mb: expanded ? 1 : 0, borderRadius: 1,
                       '&.Mui-focusVisible': { outline: '2px solid', outlineColor: 'primary.main' } }}>
                     <Box aria-hidden sx={{ flex: 1, minWidth: 8, borderTop: 1, borderColor: 'divider' }} />
                     <Typography component="span" variant="body2" noWrap
                       sx={{ fontWeight: 700, fontFamily: 'monospace', fontSize: { xs: '0.78rem', sm: '0.85rem' }, minWidth: 0 }}>
-                      ICCID：{iccid}
+                      {label}
                     </Typography>
                     <ExpandMore fontSize="small" sx={{ flexShrink: 0, transform: expanded ? 'none' : 'rotate(-90deg)' }} />
                     <Box aria-hidden sx={{ flex: 1, minWidth: 8, borderTop: 1, borderColor: 'divider' }} />
@@ -124,12 +131,12 @@ export default function EuiccNotificationsDialog({ onClose }: { onClose: () => v
                             </Typography>
                           </CardContent>
                           <CardActions sx={{ px: 1, pb: 1, pt: 0, justifyContent: 'flex-end' }}>
-                            <Button size="small" aria-label={`发送通知 ${notification.seqNumber}`} disabled={disabled}
+                            <Button size="small" aria-label={`发送通知 ${notification.seqNumber}`} disabled={disabled || !canWrite}
                               startIcon={busy === `process:${notification.seqNumber}` ? <CircularProgress size={16} /> : <Send />}
                               onClick={() => void act('process', { seq_number: notification.seqNumber })}>
                               发送
                             </Button>
-                            <Button size="small" aria-label={`删除通知 ${notification.seqNumber}`} color="error" disabled={disabled}
+                            <Button size="small" aria-label={`删除通知 ${notification.seqNumber}`} color="error" disabled={disabled || !canWrite}
                               startIcon={busy === `remove:${notification.seqNumber}` ? <CircularProgress size={16} /> : <DeleteOutline />}
                               onClick={() => safeToRemove(notification)
                                 ? void act('remove', { seq_number: notification.seqNumber }) : setPendingRemoval(notification)}>
@@ -145,12 +152,12 @@ export default function EuiccNotificationsDialog({ onClose }: { onClose: () => v
             })}
             <Stack direction="row" spacing={1} justifyContent="flex-end" data-notification-bulk-actions
               sx={{ pt: 1.5, borderTop: 1, borderColor: 'divider' }}>
-              <Button size="small" disabled={disabled || !notifications.length}
+              <Button size="small" disabled={disabled || !canWrite || !notifications.length}
                 startIcon={busy === 'process:all' ? <CircularProgress size={16} /> : <Send />}
                 onClick={() => void act('process', { all: true })}>
                 全部发送
               </Button>
-              <Button size="small" color="error" disabled={disabled || !notifications.some(safeToRemove)}
+              <Button size="small" color="error" disabled={disabled || !canWrite || !notifications.some(safeToRemove)}
                 startIcon={busy === 'remove:all' ? <CircularProgress size={16} /> : <DeleteOutline />}
                 onClick={() => void act('remove', { all: true })}>
                 全部删除

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Alert, Box, Typography } from '@mui/material'
 import { request } from '../api/request'
 import { usesSnapshotTransport } from '../api/transport'
+import { modemActivity } from '../api/modemActivity'
 import type { ApiResponse } from '../api/types'
 
 export default function AutoApnStatus() {
@@ -10,6 +11,7 @@ export default function AutoApnStatus() {
     if (!usesSnapshotTransport()) return
     let stopped = false
     const read = async () => {
+      if (modemActivity.isPaused()) return
       try {
         const value = await request<ApiResponse<NonNullable<typeof state>>>('/wwan-management')
         if (!stopped && value.status === 'ok') setState(value.data)

@@ -29,6 +29,10 @@ mkdir(directory, 0700);
 let smsSupported = profileEnabled('sms') && profile?.sms?.transport == 'sms-tool-3gpp';
 if ((action == 'send' || action == 'sync') && !smsSupported) { reply(profileUnsupported('sms')); exit(0); }
 if (action == 'config' && length(ARGV) == 1) { reply({ status: 'ok', data: { path: storage } }); exit(0); }
+if (downloadActivity().active) {
+  reply(action=='list' ? {status:'ok',data:history(storage).records,paused:true} : downloadDeferred()); exit(0);
+}
+if (action == 'sync' && manualReadPending()) { reply({ status: 'deferred', message: '手动读取排队中，稍后同步短信' }); exit(0); }
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock';
 if (!mkdir(lock, 0700)) {
   let owner = +text(lock + '/pid');
@@ -44,7 +48,7 @@ try {
     let at = ARGV[1];
     // POSIX regcomp on the target limits {n,m} counts to 255.
     if (length(ARGV) != 2 || length(at || '') > 512 || !match(at || '', /^AT[ -~]*$/i)) die('只支持单行 AT 命令');
-    let raw = bounded('CPE_OPERATOR_COMMAND=' + quote(at) + ' gcom -d ' + port + ' -s /usr/libexec/cpe-status-operator-at 2>&1', 20);
+    let raw = bounded('CPE_OPERATOR_COMMAND=' + quote(at) + ' gcom -d ' + port + ' -s /usr/libexec/cpe-status/operator-at 2>&1', 20);
     // Arbitrary commands can alter anything; the next read reconciles caches.
     let readonly = false; for (let operation in values(profile?.commands || {})) if (operation.kind == 'read' && uc(operation.command) == uc(at)) readonly = true;
     if (!readonly) {

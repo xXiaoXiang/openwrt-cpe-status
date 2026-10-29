@@ -52,42 +52,23 @@ export const bandReader = statusRuntime + bandRuntime + String.raw`
 function reply(value) { print(sprintf('%J\n', value)); }
 mkdir(directory, 0700);
 if (profile && !length(keys(bandNames))) { reply(profileUnsupported('bandCapabilities')); exit(0); }
-const bandScript = getenv('CPE_STATUS_BAND_SCRIPT') || '/usr/libexec/cpe-status-bands';
+const bandScript = getenv('CPE_STATUS_BAND_SCRIPT') || '/usr/libexec/cpe-status/bands';
 if (!match(bandScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid band executable');
-if (length(ARGV) > 1 || (length(ARGV) && ARGV[0] != '--refresh')) die('Invalid band read arguments');
+if (length(ARGV) > 2 || (length(ARGV) && ARGV[0] != '--refresh')) die('Invalid band read arguments');
 let cached = readJSON(directory + '/bands.json');
 if (cached && cached.device != port) cached = null;
 let fresh = cached && time() - cached.sampled_at < cacheSeconds.bands;
-let refreshLock = directory + '/band-refresh-lock';
 if (ARGV[0] != '--refresh') {
-  if (!fresh) {
-    let info = stat(refreshLock);
-    if (info && time() - info.mtime > 20) rmdir(refreshLock);
-    let failure = readJSON(directory + '/band-failure.json');
-    if ((!failure || time() - failure.time >= cacheSeconds.failure) && mkdir(refreshLock, 0700)) {
-      system(bandScript + ' --refresh </dev/null >' + directory + '/band-reader.log 2>&1 &');
-    }
-  }
-  let failure = readJSON(directory + '/band-failure.json');
-  if (cached) { cached.stale = !fresh; reply({ status: 'ok', data: cached, message: !fresh ? failure?.message : null }); }
-  else reply({ status: failure ? 'error' : 'deferred', message: failure?.message || '正在读取模块频段，请稍候', retry_after_ms: 2000 });
+  let job = !fresh ? queueRead('bands', bandScript) : readJob('bands');
+  if (cached) { cached.stale = !fresh; reply({ status: job?.status == 'error' && !fresh ? 'error' : 'ok', data: cached, message: !fresh ? job?.message : '', ...readProgress(job) }); }
+  else reply({ status: job?.status == 'error' ? 'error' : 'deferred', message: job?.message || '正在读取模块频段，请稍候', ...readProgress(job) });
   exit(0);
 }
-let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', acquired = mkdir(lock, 0700);
-if (!acquired) {
-  let owner = +text(lock + '/pid'), info = stat(lock);
-  if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) {
-    unlink(lock + '/pid'); rmdir(lock); acquired = mkdir(lock, 0700);
-  }
-}
-if (acquired) {
-  writefile(lock + '/pid', '' + pid);
-  try {
-    cached = readJSON(directory + '/bands.json');
-    if (!cached || cached.device != port || time() - cached.sampled_at >= cacheSeconds.bands) readBands();
-    unlink(directory + '/band-failure.json');
-  } catch(e) { save(directory + '/band-failure.json', { time: time(), message: '' + e }); }
-  unlink(lock + '/pid'); rmdir(lock);
-}
-rmdir(refreshLock);
+let job = beginRead('bands', ARGV[1]);
+if (!job) exit(0);
+try {
+  cached = readJSON(directory + '/bands.json');
+  if (!cached || cached.device != port || time() - cached.sampled_at >= cacheSeconds.bands) readBands();
+  finishRead(job);
+} catch(e) { finishRead(job, '' + e); }
 `

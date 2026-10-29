@@ -24,6 +24,7 @@ import {
 import { GitHub as GitHubIcon } from '@mui/icons-material'
 import { navigationItems } from './navigation'
 import SidebarControls from './SidebarControls'
+import { useCapabilities } from '@/contexts/CapabilitiesContext'
 
 interface SidebarProps {
   drawerWidth: number
@@ -36,6 +37,7 @@ interface SidebarProps {
 export default function Sidebar({ drawerWidth, mobileOpen, desktopOpen, onClose, isMobile }: SidebarProps) {
   const navigate = useNavigate()
   const location = useLocation()
+  const capabilities = useCapabilities()
 
   const handleNavigation = (path: string): void => {
     void navigate(path)
@@ -54,7 +56,7 @@ export default function Sidebar({ drawerWidth, mobileOpen, desktopOpen, onClose,
       </Toolbar>
       <Divider />
       <List sx={{ flexGrow: 1 }}>
-        {navigationItems.map((item) => {
+        {navigationItems.filter(item => item.path !== '/euicc' || capabilities?.lpac_enabled).map((item) => {
           const IconComponent = item.icon
           return (
             <ListItem key={item.path} disablePadding>

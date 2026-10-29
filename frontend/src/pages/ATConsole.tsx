@@ -186,7 +186,7 @@ export default function ATConsolePage() {
       <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1 }}>
         <Box display="flex" alignItems="center" gap={1}>
           <Computer fontSize="small" color="primary" />
-          <Typography variant="subtitle1" fontWeight={600}>AT 控制台</Typography>
+          <Typography variant="subtitle1" fontWeight={600}>AT</Typography>
           {history.length > 0 && (
             <Chip label={history.length} size="small" color="primary" variant="outlined" />
           )}

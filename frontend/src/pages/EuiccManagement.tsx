@@ -32,13 +32,14 @@ import {
   PowerSettingsNew,
   Refresh,
   SimCardDownload,
-  Sync,
+  SettingsOutlined,
 } from '@mui/icons-material'
 import { api } from '@/api'
 import { useCapabilities } from '@/contexts/CapabilitiesContext'
 import type { EuiccDownloadRequest, EuiccInfo, EuiccProfile } from '@/api/types'
 import EuiccNotificationsDialog from '../components/EuiccNotificationsDialog'
-import { advanceDownload, downloadedIccid, downloadFailure, downloadSteps, type DownloadProgress } from '../utils/euiccDownload'
+import EuiccSettingsDialog from '../components/EuiccSettingsDialog'
+import { advanceDownload, downloadedIccid, downloadFailure, downloadSteps, visibleLpacOutput, type DownloadProgress } from '../utils/euiccDownload'
 
 interface ProfileAction {
   type: 'enable' | 'delete'
@@ -69,13 +70,13 @@ const profileClasses: Record<string, { label: string; description: string }> = {
 
 export default function EuiccManagementPage() {
   const capabilities = useCapabilities()
+  const canWrite = capabilities?.writes_enabled === true
   const [euicc, setEuicc] = useState<EuiccInfo | null>(null)
   const [loading, setLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [pendingAction, setPendingAction] = useState<ProfileAction | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
-  const [refreshSimOpen, setRefreshSimOpen] = useState(false)
-  const [refreshSimBusy, setRefreshSimBusy] = useState(false)
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const [downloadOpen, setDownloadOpen] = useState(false)
   const [downloadRequest, setDownloadRequest] = useState(emptyDownloadRequest)
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -104,7 +105,6 @@ export default function EuiccManagementPage() {
       }
       setEuicc(response.data)
     } catch (error) {
-      setEuicc(null)
       setLoadError(error instanceof Error ? error.message : String(error))
     } finally {
       setLoading(false)
@@ -128,12 +128,18 @@ export default function EuiccManagementPage() {
     try {
       if (action.type === 'enable') {
         const response = await api.enableEuiccProfile(action.profile.iccid)
-        if (response.status !== 'ok' || !response.data) {
+        const profiles = response.data?.profiles
+        if (Array.isArray(profiles)) setEuicc((current) => (current ? { ...current, profiles } : current))
+        if (response.status === 'unconfirmed') {
+          setPendingAction(null)
+          setNotice({ severity: 'warning', text: '判断Profile切换超时，请主动刷新页面', persistent: true })
+          return
+        }
+        if (response.status !== 'ok' || !response.data || !Array.isArray(profiles)) {
           throw new Error(response.message || '未确认到目标 Profile 已启用')
         }
-        const { profiles, network_selection_warning: selectionWarning,
+        const { network_selection_warning: selectionWarning,
           network_selection_submitted: selectionSubmitted, network_selection_pending: selectionPending } = response.data
-        setEuicc((current) => (current ? { ...current, profiles } : current))
         setNotice({
           severity: selectionWarning || selectionPending ? 'warning' : 'success',
           text: `${selectionSubmitted ? 'Profile 已切换，已提交自动选网' : 'Profile 已切换'}。注册网络可能需要1～2分钟，请耐心等待。${selectionWarning
@@ -158,22 +164,6 @@ export default function EuiccManagementPage() {
       })
     } finally {
       setActionBusy(false)
-    }
-  }
-
-  const runRefreshSim = async () => {
-    setRefreshSimBusy(true)
-    try {
-      const response = await api.refreshEuiccSim()
-      if (response.status !== 'ok') {
-        throw new Error(response.message || '强制刷新失败')
-      }
-      setNotice({ severity: 'success', text: '已发送强制刷新 SIM 指令' })
-      setRefreshSimOpen(false)
-    } catch (error) {
-      setNotice({ severity: 'error', text: error instanceof Error ? error.message : String(error) })
-    } finally {
-      setRefreshSimBusy(false)
     }
   }
 
@@ -243,7 +233,7 @@ export default function EuiccManagementPage() {
   const canStartDownload = hasActivationCode || Boolean(
     downloadRequest.smdp_address?.trim() && downloadRequest.matching_id?.trim()
   )
-  const deviceBusy = actionBusy || nicknameBusy || downloadRunning || refreshSimBusy
+  const deviceBusy = actionBusy || nicknameBusy || downloadRunning || settingsOpen
   const nicknameLength = Array.from(nicknameEdit?.value || '').length
   const downloadSucceeded = downloadFinished && !downloadError
   const downloadIccid = downloadedIccid(downloadProgress)
@@ -262,7 +252,7 @@ export default function EuiccManagementPage() {
       >
         <Box>
           <Typography variant="h4" component="h1" fontWeight={700}>
-            eUICC 管理
+            eUICC
           </Typography>
           {euicc && (
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.75, overflowWrap: 'anywhere' }}>
@@ -286,12 +276,11 @@ export default function EuiccManagementPage() {
           </Tooltip>
           <Button
             variant="outlined"
-            color="warning"
-            startIcon={<Sync />}
-            onClick={() => setRefreshSimOpen(true)}
-            disabled
+            startIcon={<SettingsOutlined />}
+            onClick={() => setSettingsOpen(true)}
+            disabled={loading || deviceBusy}
           >
-            强制刷新 eUICC SIM
+            卡片通信设置
           </Button>
           <Button variant="outlined" startIcon={<NotificationsNone />}
             onClick={() => setNotificationsOpen(true)} disabled={!euicc || loading || deviceBusy}>
@@ -304,16 +293,16 @@ export default function EuiccManagementPage() {
               setDownloadError(null)
               setDownloadOpen(true)
             }}
-            disabled={!euicc || loading || deviceBusy}
+            disabled={!euicc || loading || deviceBusy || !canWrite}
           >
             下载 Profile
           </Button>
         </Stack>
       </Stack>
 
-      {capabilities && !capabilities.lpac_enabled && <Alert severity="info" sx={{ mb: 2 }}>尚未启用 LPAC/APDU。请先在路由器配置 eUICC 卡及其 AT 传输，普通 SIM 无需启用此功能。</Alert>}
+      {capabilities && !capabilities.lpac_enabled && <Alert severity="info" sx={{ mb: 2 }}>没有检测到可用的eUICC卡。</Alert>}
       <Alert severity="warning" sx={{ mb: 2.5 }}>
-        切换 Profile 后将恢复自动选网，蜂窝网络可能短暂中断。删除 Profile 不可撤销。
+        切换 Profile 后蜂窝网络可能短暂中断。删除 Profile 不可撤销。
       </Alert>
 
       {euiccUnavailable && (
@@ -363,7 +352,7 @@ export default function EuiccManagementPage() {
                           <Typography variant="body2" color="text.secondary" noWrap title={profile.profileNickname} sx={{ fontWeight: 400, minWidth: 0 }}>{profile.profileNickname}</Typography>
                         )}
                         {!editing && <Tooltip title="编辑昵称"><Box component="span" sx={{ flexShrink: 0 }}>
-                          <IconButton size="small" aria-label={`编辑 ${name} 的昵称`} disabled={deviceBusy}
+                          <IconButton size="small" aria-label={`编辑 ${name} 的昵称`} disabled={deviceBusy || !canWrite}
                             onClick={() => {
                               setNicknameEdit({ iccid: profile.iccid, value: profile.profileNickname || '' })
                               setNicknameError(null)
@@ -412,11 +401,11 @@ export default function EuiccManagementPage() {
                     </Stack>
                     <Stack spacing={0.5} sx={{ flexShrink: 0 }}>
                       <Button size="small" startIcon={<PowerSettingsNew />} aria-label={`启用 ${name}`}
-                        onClick={() => setPendingAction({ type: 'enable', profile })} disabled={enabled || deviceBusy}>
+                        onClick={() => setPendingAction({ type: 'enable', profile })} disabled={enabled || deviceBusy || !canWrite}>
                         启用
                       </Button>
                       <Button size="small" startIcon={<DeleteOutline />} aria-label={`删除 ${name}`} color="error"
-                        onClick={() => setPendingAction({ type: 'delete', profile })} disabled={deviceBusy}>
+                        onClick={() => setPendingAction({ type: 'delete', profile })} disabled={deviceBusy || !canWrite}>
                         删除
                       </Button>
                     </Stack>
@@ -430,7 +419,7 @@ export default function EuiccManagementPage() {
         <Alert severity="info">eUICC 已就绪，当前没有已安装的 Profile。</Alert>
       ) : null}
 
-      {notificationsOpen && <EuiccNotificationsDialog onClose={() => setNotificationsOpen(false)} />}
+      {notificationsOpen && <EuiccNotificationsDialog profiles={euicc?.profiles ?? []} onClose={() => setNotificationsOpen(false)} />}
 
       <Dialog open={pendingAction !== null} onClose={() => !actionBusy && setPendingAction(null)}>
         <DialogTitle>{pendingAction?.type === 'delete' ? '确认删除 Profile' : '确认启用 Profile'}</DialogTitle>
@@ -465,26 +454,7 @@ export default function EuiccManagementPage() {
         </DialogActions>
       </Dialog>
 
-      <Dialog open={refreshSimOpen} onClose={() => !refreshSimBusy && setRefreshSimOpen(false)}>
-        <DialogTitle>强制刷新 eUICC SIM</DialogTitle>
-        <DialogContent>
-          <DialogContentText sx={{ whiteSpace: 'pre-line' }}>
-            {'切换Profile后请耐心等待30秒，强制刷新有可能造成eUICC失去响应。\n确认是否强制刷新？'}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setRefreshSimOpen(false)} disabled={refreshSimBusy}>取消</Button>
-          <Button
-            onClick={() => void runRefreshSim()}
-            color="warning"
-            variant="contained"
-            disabled={refreshSimBusy}
-            startIcon={refreshSimBusy ? <CircularProgress size={16} color="inherit" /> : undefined}
-          >
-            强制刷新
-          </Button>
-        </DialogActions>
-      </Dialog>
+      <EuiccSettingsDialog open={settingsOpen} canWrite={canWrite} onClose={() => setSettingsOpen(false)} onSaved={() => void loadEuicc()} />
 
       <Dialog open={downloadOpen} onClose={() => setDownloadOpen(false)} fullWidth maxWidth="sm">
         <DialogTitle>下载 eUICC Profile</DialogTitle>
@@ -550,6 +520,7 @@ export default function EuiccManagementPage() {
             <Typography role="status" aria-live="polite" color="text.secondary">
               {downloadRunning ? '正在下载您的 eSIM…' : downloadSucceeded ? 'eSIM 配置文件下载成功' : '下载未完成'}
             </Typography>
+            {downloadRunning && <Typography variant="body2" color="text.secondary">请留在此页面，直到下载进程结束。</Typography>}
             <Box role="list" aria-label="eSIM 下载进度">
               {downloadSteps.map((label, index) => {
                 const complete = downloadSucceeded || index < downloadProgress.step
@@ -601,7 +572,7 @@ export default function EuiccManagementPage() {
                 overflowWrap: 'anywhere',
               }}
             >
-              {downloadOutput || (downloadRunning ? '等待 LPAC 输出…' : '')}
+              {visibleLpacOutput(downloadOutput) || (downloadRunning ? '等待 LPAC 输出…' : '')}
             </Box>}
           </Stack>
         </DialogContent>

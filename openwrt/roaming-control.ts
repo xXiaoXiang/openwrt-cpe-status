@@ -8,12 +8,14 @@ if (length(ARGV) != 1 || (ARGV[0] != '1' && ARGV[0] != '255')) {
   reply({ status: 'error', message: 'Invalid roaming preference; expected 1 or 255' }); exit(0);
 }
 mkdir(directory, 0700);
+if (downloadActivity().active) { reply(downloadDeferred()); exit(0); }
 try {
   if (!profileHas('roamingPreference')) { reply(profileUnsupported('roamingPreference')); exit(0); }
   profileCommand('roamingSet', { preference: ARGV[0] });
 } catch(e) { reply(index('' + e, 'Unsupported:') >= 0 ? profileUnsupported('' + e) : { status: 'error', message: '' + e }); exit(0); }
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', deadline = time() + 10;
 while (!mkdir(lock, 0700)) {
+  if (downloadActivity().active) { reply(downloadDeferred()); exit(0); }
   let owner = +text(lock + '/pid'), info = stat(lock);
   if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) { unlink(lock + '/pid'); rmdir(lock); continue; }
   if (time() >= deadline) { reply({ status: 'error', message: 'Modem 忙，漫游设置尚未提交，请稍后重试', submitted: false }); exit(0); }

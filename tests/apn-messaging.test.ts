@@ -1,7 +1,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
-import { compileApns, selectApn, type ApnEntry } from '../shared/apn.ts'
+import { compileApns, selectApn, matchingApns, type ApnEntry } from '../shared/apn.ts'
+import { compileProviderDatabase } from '../shared/apn-database.ts'
+import { bundledApnDatabase } from '../data/apn-database.ts'
 import { joinSmsSegments } from '../shared/sms-history.ts'
 import { snapshotRoutes } from '../shared/status-snapshot.ts'
 import { r13Snapshot } from './fixtures/rm500q-r13.ts'
@@ -14,6 +16,16 @@ test('Android APN import excludes IMS/MMS-only and proxy-only entries, retains M
   assert.equal(csl.apn, 'internet')
   assert.equal(csl.mnc, '00')
   assert.ok(!entries.some(row => row.apn === 'ims'))
+})
+
+test('bundled provider database retains home MNC zeroes, multiple APNs and protocol variants', () => {
+  assert.equal(bundledApnDatabase.count, bundledApnDatabase.entries.length)
+  const hk = matchingApns(bundledApnDatabase.entries, { imsi: '454031234567890', mncLength: 2 })
+  assert.ok(hk.some(row => row.mnc === '03' && row.apn === 'mobile.three.com.hk'))
+  assert.ok(hk.some(row => row.apn === 'mobile.lte.three.com.hk'))
+  assert.ok(hk.some(row => row.apn === 'mobile.three.com.hk' && row.protocol === 'IPV4V6'))
+  assert.throws(() => compileProviderDatabase('<html>download failed</html>'), /format/)
+  assert.throws(() => compileProviderDatabase('# database-format: 2\n# database-version: 2026.10.23\n'), /entry count/)
 })
 
 test('home IMSI/EF_AD and MVNO matches select APN without using roaming PLMN', () => {
@@ -39,6 +51,20 @@ test('half-second speed samples use actual elapsed time and handle counter reset
   assert.equal(stats.network_speed.interval_seconds, 0.5)
   assert.equal(stats.network_speed.interfaces[0].rx_bytes_per_sec, 2000)
   assert.equal(stats.network_speed.interfaces[0].tx_bytes_per_sec, 0)
+})
+
+test('provider candidates retain multiple APNs and require every subscriber discriminator',()=>{
+  const entries:ApnEntry[]=[
+    {carrier:'home one',mcc:'454',mnc:'03',apn:'mobile.three.com.hk',priority:200},
+    {carrier:'home two',mcc:'454',mnc:'03',apn:'mobile.lte.three.com.hk',priority:201},
+    {carrier:'another SIM',mcc:'454',mnc:'03',apn:'other',iccid_pattern:'898600'},
+    {carrier:'travel',mcc:'*',mnc:'',apn:'travel',iccid_pattern:'8985203',imsi_pattern:'45403xx',gid1:'01',spn:'3'},
+  ]
+  const sim={imsi:'454031234567890',iccid:'8985203000000000001',mncLength:2,gid:'01FF',spn:'3'}
+  assert.deepEqual(matchingApns(entries,sim).map(row=>row.apn),['travel','mobile.three.com.hk','mobile.lte.three.com.hk'])
+  assert.deepEqual(matchingApns(entries,{...sim,spn:'other'}).map(row=>row.apn),['mobile.three.com.hk','mobile.lte.three.com.hk'])
+  assert.equal(selectApn(entries,{...sim,spn:'other'},'mobile.lte.three.com.hk')?.apn,'mobile.lte.three.com.hk')
+  assert.equal(selectApn(entries,sim,'mobile.lte.three.com.hk')?.apn,'travel')
 })
 
 test('SMS archive joins complete multipart messages while isolating SIMs and incomplete parts', () => {

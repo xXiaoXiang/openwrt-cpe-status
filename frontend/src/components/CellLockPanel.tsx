@@ -11,6 +11,7 @@ import { cellTarget, cellLockParams, cellLockCommand, type CellLockRequest, type
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import type { CellsResponse } from '../api/types'
 import { operationSupported } from '../../../shared/availability.ts'
+import { isDeferredMessage } from '../api/modemPolling'
 
 export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (busy: boolean) => void; disabled?: boolean }) {
   const { refreshInterval, refreshKey } = useRefreshInterval()
@@ -29,12 +30,15 @@ export default function CellLockPanel({ onBusy, disabled = false }: { onBusy?: (
   const supported = (name: string) => !profile || operationSupported(profile, name)
   const readLocks = useCallback(async (force = false) => {
     const started = revision.current
-    for (let attempt = 0; attempt < 12 && active.current; attempt++) {
-      const result = await request<ApiResponse<CellLockState>>(force && attempt === 0 ? '/cell-lock/refresh' : '/cell-lock')
-      if (!active.current || started !== revision.current) return
-      if (result.data) setLocks(result.data)
-      if (result.status === 'unsupported' || result.status === 'error' || (result.status === 'ok' && result.data && !result.data.stale)) return result
-      await new Promise(resolve => window.setTimeout(resolve, 2000))
+    const deadline = Date.now() + 65_000
+    for (let attempt = 0; active.current && started === revision.current && Date.now() < deadline; attempt++) {
+      try {
+        const result = await request<ApiResponse<CellLockState>>(force && attempt === 0 ? '/cell-lock/refresh' : '/cell-lock')
+        if (!active.current || started !== revision.current) return
+        if (result.data) setLocks(result.data)
+        if (result.status === 'unsupported' || result.status === 'error' || (result.status === 'ok' && result.data && !result.data.stale)) return result
+      } catch (error) { if (!isDeferredMessage(String(error))) throw error }
+      await new Promise(resolve => window.setTimeout(resolve, 1000))
     }
   }, [])
   const readScan = useCallback(async (restore = true) => {

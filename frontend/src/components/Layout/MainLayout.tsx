@@ -12,6 +12,7 @@ import { Outlet, useLocation } from 'react-router-dom'
 import { alpha, Box, Paper, type Theme, useMediaQuery, useTheme } from '@mui/material'
 
 import { api } from '../../api'
+import { modemActivity } from '../../api/modemActivity'
 import { RefreshContext } from '../../contexts/RefreshContext'
 import { DashboardDataContext } from '../../contexts/DashboardDataContext'
 import { DashboardHeaderContext } from '../../contexts/DashboardHeaderContext'
@@ -87,6 +88,7 @@ export default function MainLayout() {
     let cancelled = false
 
     const sendHeartbeat = () => run('heartbeat', async () => {
+      if (modemActivity.isPaused()) return
       try {
         await api.sendRefreshHeartbeat()
       } catch (error) {

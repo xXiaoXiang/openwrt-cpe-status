@@ -7,6 +7,7 @@ import { bandGroups, type BandState, type BandSelection } from '../../../shared/
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import CellLockPanel from '../components/CellLockPanel'
 import { operationSupported } from '../../../shared/availability.ts'
+import { isDeferredMessage } from '../api/modemPolling'
 
 export default function Bands() {
   const capabilities = useCapabilities()
@@ -36,20 +37,23 @@ export default function Bands() {
     try {
       // Finish this explicit read, including a cold asynchronous cache fill.
       // Once it succeeds there is no periodic band-preference polling.
-      for (let attempt = 0; attempt < 15 && mounted.current; attempt++) {
-      const result = await request<ApiResponse<BandState>>('/band-lock')
-      if (!mounted.current || started !== revision.current) return
-      if (result.status === 'unsupported') { setUnavailable(true); setNotice(undefined); break }
-      if (result.data) {
-        setState(result.data)
-        // A manual read must not erase unsaved choices.
-        if (!editing.current) setDraft(structuredClone(result.data.enabled))
+      const deadline = Date.now() + 65_000
+      while (mounted.current && started === revision.current && Date.now() < deadline) {
+        try {
+          const result = await request<ApiResponse<BandState>>('/band-lock')
+          if (!mounted.current || started !== revision.current) return
+          if (result.status === 'unsupported') { setUnavailable(true); setNotice(undefined); return }
+          if (result.data) {
+            setState(result.data)
+            // A manual read must not erase unsaved choices.
+            if (!editing.current) setDraft(structuredClone(result.data.enabled))
+          }
+          if (result.status === 'ok' && result.data && !result.data.stale) { setNotice(undefined); return }
+          if (result.status === 'error') { setNotice({ severity: 'error', text: result.message || '读取频段失败' }); return }
+        } catch (error) { if (!isDeferredMessage(String(error))) throw error }
+        await new Promise(resolve => window.setTimeout(resolve, 1000))
       }
-      if (result.status === 'ok' && result.data && !result.data.stale) { setNotice(previous => previous?.severity === 'info' ? undefined : previous); break }
-      if (result.status === 'error') { setNotice({ severity: 'error', text: result.message || '读取频段失败' }); break }
-      if (attempt === 14) { setNotice({ severity: 'info', text: '模块暂忙，可稍后手动读取频段设置' }); break }
-      await new Promise(resolve => window.setTimeout(resolve, 2000))
-      }
+      if (mounted.current && started === revision.current) setNotice({ severity: 'info', text: '模块暂忙，可稍后手动读取频段设置' })
     } catch (error) { if (mounted.current) { setNotice({ severity: 'error', text: String(error) }); setReading(false) } }
     finally { pending.current = false; if (mounted.current) setReading(false) }
   }, [])
@@ -78,7 +82,7 @@ export default function Bands() {
 
   return <Stack spacing={2} data-band-settings>
     <Box display="flex" alignItems="center" gap={1} flexWrap="wrap">
-      <SettingsInputAntenna color="primary" /><Typography variant="h6" sx={{ flex: 1 }}>频段与小区设置</Typography>
+      <SettingsInputAntenna color="primary" /><Typography variant="h6" sx={{ flex: 1 }}>频段/小区</Typography>
       {state && <Chip size="small" label={state.model} />}
       <Button startIcon={reading ? <CircularProgress size={16} /> : <Refresh />} disabled={busy || reading || cellBusy} onClick={() => void read()}>读取设置</Button>
     </Box>

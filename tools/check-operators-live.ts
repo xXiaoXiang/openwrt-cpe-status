@@ -11,7 +11,7 @@ task=/tmp/cpe-operator-transport-check
 mkdir -p "$task"
 cat > "$task/at.gcom" <<'CPE_OPERATOR_SCRIPT'
 ` + operatorAt + String.raw`CPE_OPERATOR_SCRIPT
-port=$(ucode -e 'import {readfile} from "fs"; let cfg=json(readfile("/etc/cpe-status.json")); if(!match(cfg.device,/^\/dev\/tty(USB|ACM)[0-9]+$/)) exit(1); print(cfg.device);')
+port=$(ucode -e 'import {readfile} from "fs"; let cfg=json(readfile("/etc/cpe-status/config.json")); if(!match(cfg.device,/^\/dev\/tty(USB|ACM)[0-9]+$/)) exit(1); print(cfg.device);')
 mkdir /tmp/cpe-status/lock || { echo 'Modem is busy'; exit 1; }
 echo $$ >/tmp/cpe-status/lock/pid
 trap 'rm -f /tmp/cpe-status/lock/pid; rmdir /tmp/cpe-status/lock' EXIT

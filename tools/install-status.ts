@@ -17,10 +17,25 @@ const architecture = /-(aarch64_cortex-a53|x86_64)\.apk$/.exec(basename(apk))?.[
 if (architecture && ssh('cat /etc/apk/arch 2>/dev/null || apk --print-arch').trim() !== architecture) throw new Error('APK architecture does not match the target router')
 const untouched = () => ssh("uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum").trim()
 const before = untouched(), sha256 = createHash('sha256').update(await readFile(apk)).digest('hex'), name = basename(apk)
+const persistentHashes = () => {
+  const out = ssh("find /etc/cpe-status -type f ! -path '/etc/cpe-status/legacy/*' -exec sha256sum {} \\;\nif test -f /etc/cpe-status.json; then sha256sum /etc/cpe-status.json; fi")
+  return Object.fromEntries(out.trim().split('\n').filter(Boolean).map(line => {
+    const match = /^([a-f0-9]{64})  (\/etc\/cpe-status(?:\/.*|\.json))$/.exec(line)
+    if (!match) throw new Error('Unexpected persistent file checksum')
+    return [match[2], match[1]]
+  }))
+}
+const persistentBefore = persistentHashes()
 execFileSync('scp', ['-O', ...sshOptions, apk, `${router}:/root/${name}`], { stdio: 'inherit', windowsHide: true })
 const verified = ssh(`sha256sum /root/${name}`).trim().split(/\s+/)[0]
 if (verified !== sha256) throw new Error('Router APK checksum mismatch')
 console.log(ssh(`apk add --network=no --allow-untrusted${reinstall} /root/${name}\napk list --installed luci-app-cpe-status`))
+const persistentAfter = persistentHashes()
+for (const [path, hash] of Object.entries(persistentBefore)) {
+  const destination = path === '/etc/cpe-status.json' ? (persistentBefore['/etc/cpe-status/config.json'] ? '/etc/cpe-status/legacy/cpe-status.json' : '/etc/cpe-status/config.json') : path
+  const actual = destination.includes('/legacy/') ? ssh(`sha256sum ${destination}`).trim().split(/\s+/)[0] : persistentAfter[destination]
+  if (actual !== hash) throw new Error('Persistent configuration changed during upgrade: ' + destination)
+}
 const after = untouched()
 if (before !== after) throw new Error('Unexpected configuration change outside network.wwan')
 const summary = ssh(`
@@ -37,6 +52,6 @@ uci -q get network.wwan.apn
 uci -q get network.wwan.modes
 ubus -S call network.interface.wwan status
 `)
-await writeFile('build/router-audit/installed-services.json', JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: before === after, summary }, null, 2))
+await writeFile('build/router-audit/installed-services.json', JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: before === after, persistentFilesPreserved: Object.keys(persistentBefore).length, persistentBefore, persistentAfter, summary }, null, 2))
 console.log(summary)
-console.log(JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: true }))
+console.log(JSON.stringify({ apk: name, sha256, otherInterfacesUnchanged: true, persistentFilesPreserved: Object.keys(persistentBefore).length }))

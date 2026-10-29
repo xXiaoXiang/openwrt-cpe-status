@@ -1,6 +1,7 @@
 export interface ApnEntry {
   carrier: string; mcc: string; mnc: string; apn: string; protocol?: string
   user?: string; password?: string; authtype?: string; mvno_type?: string; mvno_match_data?: string
+  imsi_pattern?: string; iccid_pattern?: string; gid1?: string; spn?: string; priority?: number
 }
 export interface SimIdentity { imsi: string; iccid?: string; mncLength?: number; spn?: string; gid?: string }
 const entity = (value: string) => value.replace(/&(#x[\da-f]+|#\d+|amp|quot|apos|lt|gt);/gi, (_, key: string) => {
@@ -19,13 +20,17 @@ export function compileApns(xml: string): ApnEntry[] {
   if (!result.length) throw new Error('APN database has no usable default entries')
   return result
 }
-export function selectApn(entries: ApnEntry[], sim: SimIdentity, current = ''): ApnEntry | undefined {
-  if (!/^\d{14,16}$/.test(sim.imsi)) return undefined
-  const candidates = entries.filter(row => sim.imsi.startsWith(row.mcc + row.mnc) && (!sim.mncLength || row.mnc.length === sim.mncLength))
-  const lengths = new Set(candidates.map(row => row.mnc.length))
+export function matchingApns(entries: ApnEntry[], sim: SimIdentity): ApnEntry[] {
+  if (!/^\d{14,16}$/.test(sim.imsi)) return []
+  const candidates = entries.filter(row => row.mcc === '*' || sim.imsi.startsWith(row.mcc + row.mnc) && (!sim.mncLength || row.mnc.length === sim.mncLength))
+  const lengths = new Set(candidates.filter(row => row.mcc !== '*').map(row => row.mnc.length))
   // Ambiguous 2-/3-digit home MNC must be resolved by EF_AD, never guessed.
-  if (lengths.size > 1) return undefined
+  if (lengths.size > 1) return []
+  const digits = (value: string | undefined, pattern: string) => !!value && value.length >= pattern.length && [...pattern].every((char, i) => /[xX]/.test(char) || char === value[i])
   const matches = (row: ApnEntry) => {
+    if (row.mcc === '*' && ![row.imsi_pattern, row.iccid_pattern, row.gid1, row.spn].some(Boolean)) return false
+    if (row.imsi_pattern && !digits(sim.imsi, row.imsi_pattern) || row.iccid_pattern && !digits(sim.iccid, row.iccid_pattern)) return false
+    if (row.gid1 && !sim.gid?.toLowerCase().startsWith(row.gid1.toLowerCase()) || row.spn && sim.spn?.toLowerCase() !== row.spn.toLowerCase()) return false
     const pattern = row.mvno_match_data ?? ''
     switch (row.mvno_type?.toLowerCase()) {
       case undefined: case '': return true
@@ -36,6 +41,11 @@ export function selectApn(entries: ApnEntry[], sim: SimIdentity, current = ''): 
       default: return false
     }
   }
-  const valid = candidates.filter(matches)
-  return valid.sort((a, b) => Number(!!b.mvno_type) - Number(!!a.mvno_type) || Number(b.apn === current) - Number(a.apn === current))[0]
+  return candidates.filter(matches).sort((a, b) => Number(!!(b.mvno_type || b.imsi_pattern || b.iccid_pattern || b.gid1 || b.spn)) - Number(!!(a.mvno_type || a.imsi_pattern || a.iccid_pattern || a.gid1 || a.spn)) || (a.priority ?? 100) - (b.priority ?? 100))
+}
+export function selectApn(entries: ApnEntry[], sim: SimIdentity, current = ''): ApnEntry | undefined {
+  const valid = matchingApns(entries, sim)
+  const specific = valid.filter(row => row.mvno_type || row.imsi_pattern || row.iccid_pattern || row.gid1 || row.spn)
+  const preferred = specific.length ? specific : valid
+  return preferred.find(row => row.apn === current) || preferred[0]
 }

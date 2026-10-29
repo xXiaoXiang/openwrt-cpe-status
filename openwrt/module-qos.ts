@@ -153,6 +153,18 @@ sub existing_logger {
   }
   return 0;
 }
+if (($ARGV[0]||'') eq '--stop') {
+  my $wanted=$ARGV[1] || '';
+  die 'invalid collector run' unless $wanted =~ /^\d+-\d+$/;
+  my ($status,$owner)=(text("$dir/status.json"),text("$dir/collector.pid"));
+  if ($status =~ /"run_id"\s*:\s*"\Q$wanted\E"/ && $owner =~ /^[1-9]\d*$/
+      && text("/proc/$owner/cmdline") =~ m{(?:^|\0)/tmp/cpe-status-qos-collector\.pl(?:\0|$)}) {
+    kill 'TERM',$owner;
+    my $until=monotonic()+6;
+    while (-e "/proc/$owner" && monotonic()<$until) { select undef,undef,undef,0.1; }
+  }
+  exit 0;
+}
 if (($ARGV[0]||'') eq '--decode') {
   open my $fh,'<',$ARGV[1] or die $!; binmode $fh;
   while (read($fh,my $data,65536)) { feed($data); }
@@ -162,6 +174,8 @@ if (($ARGV[0]||'') eq '--decode') {
 mkdir $dir,0700 unless -d $dir;
 open my $lock,'>',"$dir/collector.lock" or die $!;
 flock($lock,LOCK_EX|LOCK_NB) or exit 0;
+open my $owner,'>',"$dir/collector.pid" or die $!;
+print $owner $$; close $owner;
 $boot=text('/proc/sys/kernel/random/boot_id'); $start=monotonic();
 $SIG{TERM}=sub { $stop=1; }; $SIG{INT}=sub { $stop=1; };
 $SIG{HUP}=sub { $stop=1; }; $SIG{ALRM}=sub { $stop=1; }; $SIG{PIPE}='IGNORE';
@@ -212,5 +226,6 @@ if ($logger) { kill 'TERM',$logger; waitpid($logger,0); }
 my $outcome=$error ? 'error' : $complete ? 'complete' : $stop ? 'stopped' : 'timeout';
 status($outcome,$error || ($complete ? 'Data-bearer QoS cached; collector stopped' : 'No new data-bearer QoS; no RF change requested'));
 save('cleanup.json',{ mask_restored=>$restored?1:0, logger_stopped=>1, boot_id=>$boot, run_id=>$ENV{CPE_QOS_RUN_ID} || '' });
+unlink "$dir/collector.pid";
 exit($error?1:0);
 `

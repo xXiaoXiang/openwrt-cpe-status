@@ -14,7 +14,7 @@ import { Box, CircularProgress } from '@mui/material'
 import { ThemeProvider } from './contexts/ThemeContext'
 import { queryClient } from './lib/queryClient'
 import MainLayout from './components/Layout/MainLayout'
-import { CapabilitiesProvider } from './contexts/CapabilitiesContext'
+import { CapabilitiesProvider, useCapabilities } from './contexts/CapabilitiesContext'
 
 // 路由级别代码分割 - 按需加载页面组件
 const Dashboard = lazy(() => import('./pages/Dashboard'))
@@ -60,6 +60,12 @@ function renderLazyPage(PageComponent: LazyPageComponent) {
   )
 }
 
+function EuiccGate() {
+  const capabilities = useCapabilities()
+  if (!capabilities) return <PageLoading />
+  return capabilities.lpac_enabled ? renderLazyPage(EuiccManagement) : <Navigate to="/" replace />
+}
+
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -72,7 +78,7 @@ function App() {
                   key={route.path ?? 'index'}
                   index={route.index}
                   path={route.path}
-                  element={renderLazyPage(route.component)}
+                  element={route.path === 'euicc' ? <EuiccGate /> : renderLazyPage(route.component)}
                 />
               ))}
               {/* 旧路由重定向到网络状态页面 */}

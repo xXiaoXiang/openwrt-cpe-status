@@ -60,7 +60,7 @@ const script = [
   'set -eu', 'umask 077', `mkdir ${root}`, `export CPE_MODE_LIVE_DIR=${root}`, `export CPE_MODE_ISOLATE=${process.argv.includes('--isolate-qmi') ? 1 : 0}`,
   ...Object.entries({ probe, control: modemControl, result: modemControlResult }).flatMap(([file, content], i) => [`cat >${root}/${file} <<'CPE_MODE_FILE_${i}'`, content, `CPE_MODE_FILE_${i}`, `chmod 700 ${root}/${file}`]),
   `export CPE_MODE_CANDIDATE=${process.argv.includes('--candidate') ? 1 : 0}`,
-  process.argv.includes('--candidate') ? `export CPE_STATUS_CONTROL_SCRIPT=${root}/control CPE_MODE_RESULT_SCRIPT=${root}/result` : 'export CPE_STATUS_CONTROL_SCRIPT=/usr/libexec/cpe-status-control CPE_MODE_RESULT_SCRIPT=/usr/libexec/cpe-status-control-result',
+  process.argv.includes('--candidate') ? `export CPE_STATUS_CONTROL_SCRIPT=${root}/control CPE_MODE_RESULT_SCRIPT=${root}/result` : 'export CPE_STATUS_CONTROL_SCRIPT=/usr/libexec/cpe-status/control CPE_MODE_RESULT_SCRIPT=/usr/libexec/cpe-status/control-result',
   String.raw`
 runjob() {
   echo "JOB $1 $2"

@@ -574,7 +574,7 @@ export default function SMSPage() {
       <Box display="flex" alignItems="center" gap={1} mb={2}>
         <SmsIcon color="primary" />
         <Typography variant="h5" fontWeight={600}>
-          短信管理
+          短信
         </Typography>
         {!smsSupported && <Typography color="text.secondary">-</Typography>}
       </Box>

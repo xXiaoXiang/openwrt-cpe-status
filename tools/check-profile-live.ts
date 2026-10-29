@@ -6,24 +6,24 @@ import { profileFixture } from './profile-fixture.ts'
 import type { ProfileReply } from '../frontend/src/api/profileCache.ts'
 
 const root = `/tmp/cpe-live-profile-${process.pid}`
-const directory = 'build/openwrt-status-package/files/usr/libexec'
+const directory = 'build/openwrt-status-package/files/usr/libexec/cpe-status'
 const scripts: Record<string, string> = {}
 for (const name of await readdir(directory)) {
   const contents = await readFile(`${directory}/${name}`, 'utf8')
   if (contents.startsWith('#!/usr/bin/ucode')) scripts[name] = contents
 }
-const commands = [profileFixture(root), 'set -eu', `mkdir -p ${root}/cache`, `cp /etc/cpe-status.json ${root}/config.json`,
+const commands = [profileFixture(root), 'set -eu', `mkdir -p ${root}/cache`, `cp /etc/cpe-status/config.json ${root}/config.json`,
   ...Object.entries(scripts).flatMap(([name, contents], index) => [`cat >${root}/${name} <<'CPE_LIVE_${index}'`, contents, `CPE_LIVE_${index}`, `chmod 700 ${root}/${name}`, `ucode -c -o /dev/null ${root}/${name}`]),
   `export CPE_STATUS_CONFIG=${root}/config.json CPE_STATUS_CACHE=${root}/cache CPE_STATUS_LOCK=/tmp/cpe-status/lock`,
-  `export CPE_STATUS_SCRIPT=${root}/cpe-status-snapshot CPE_STATUS_BAND_SCRIPT=${root}/cpe-status-bands CPE_STATUS_CELL_SCRIPT=${root}/cpe-status-cell-locks CPE_STATUS_OPERATOR_SCRIPT=${root}/cpe-status-operators CPE_STATUS_APN_SCRIPT=${root}/cpe-status-apn`,
+  `export CPE_STATUS_SCRIPT=${root}/snapshot CPE_STATUS_BAND_SCRIPT=${root}/bands CPE_STATUS_CELL_SCRIPT=${root}/cell-locks CPE_STATUS_OPERATOR_SCRIPT=${root}/operators CPE_STATUS_APN_SCRIPT=${root}/apn`,
   `echo '>>> network-before'; uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum`,
-  `echo '>>> snapshot'; ${root}/cpe-status-snapshot --refresh`,
-  `echo '>>> cached'; ${root}/cpe-status-snapshot`,
-  `echo '>>> profile'; ${root}/cpe-status-snapshot profile`,
+  `echo '>>> snapshot'; ${root}/snapshot --refresh`,
+  `echo '>>> cached'; ${root}/snapshot`,
+  `echo '>>> profile'; ${root}/snapshot profile`,
   `for name in bands cell-locks operators apn; do`,
-  `  ${root}/cpe-status-$name --refresh`,
+  `  ${root}/$name --refresh`,
   `  echo ">>> $name"`,
-  `  ${root}/cpe-status-$name`,
+  `  ${root}/$name`,
   `done`,
   `echo '>>> network-after'; uci show network | sed '/^network\\.wwan[.=]/d' | sha256sum`,
   `echo '>>> done'`].join('\n') + '\n'

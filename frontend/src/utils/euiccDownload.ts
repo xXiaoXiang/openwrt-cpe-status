@@ -1,5 +1,17 @@
 import type { LpacEvent, LpacPayload } from '../api/types.ts'
 
+const atDriverWarnings = new Set([
+  'WARNING: AT driver is for demo purposes only.',
+  'WARNING: AT driver strictly complies with "ETSI TS 127 007" specification.',
+  'WARNING: Some operations (e.g: download, delete, etc.), may fail due to insufficient response time.',
+])
+
+// Suppress only these fixed driver notices in the UI; keep real errors and
+// the original captured output available for diagnosis.
+export function visibleLpacOutput(output: string): string {
+  return output.split('\n').filter(line => !atDriverWarnings.has(line.trim())).join('\n')
+}
+
 export const downloadSteps = [
   '准备中',
   '正在连接服务器',

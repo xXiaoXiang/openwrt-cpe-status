@@ -6,6 +6,7 @@ import { networkModes } from '../../../shared/radio-settings.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import { SettingsInputAntenna } from '@mui/icons-material'
 import { operationSupported, parameterSupported } from '../../../shared/availability.ts'
+import { modemActivity } from '../api/modemActivity'
 
 export default function NetworkModeControl() {
   const capabilities = useCapabilities()
@@ -18,7 +19,7 @@ export default function NetworkModeControl() {
   const [notice, setNotice] = useState<{ status: string; message: string }>()
   const active = useRef(true), writing = useRef(false), reading = useRef(false), revision = useRef(0)
   const read = useCallback(async () => {
-    if (writing.current || reading.current) return
+    if (writing.current || reading.current || modemActivity.isPaused()) return
     reading.current = true
     const started = revision.current
     try {

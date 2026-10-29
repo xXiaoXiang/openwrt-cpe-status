@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { modemActivity } from '../api/modemActivity'
+export const useModemDownloadPause = () => useSyncExternalStore(modemActivity.subscribe, modemActivity.isPaused, () => false)
 
 const DEFAULT_HIDDEN_MIN_INTERVAL = 30_000
 const DEFAULT_HIDDEN_MULTIPLIER = 6
@@ -68,6 +70,7 @@ export function useAdaptivePolling({
   const tickRef = useRef(onTick)
   useEffect(() => { tickRef.current = onTick }, [onTick])
   const isPageVisible = usePageVisibility()
+  const paused = useModemDownloadPause()
   const effectiveRefreshInterval = useMemo(
     () =>
       getAdaptiveRefreshInterval(refreshInterval, isPageVisible, {
@@ -78,6 +81,7 @@ export function useAdaptivePolling({
   )
 
   useEffect(() => {
+    if (paused) return
     if (immediate) {
       void tickRef.current()
     }
@@ -94,7 +98,7 @@ export function useAdaptivePolling({
     return () => {
       window.clearInterval(timer)
     }
-  }, [effectiveRefreshInterval, immediate, refreshKey])
+  }, [effectiveRefreshInterval, immediate, refreshKey, paused])
 
   return {
     effectiveRefreshInterval,
@@ -119,7 +123,9 @@ export function useCompletionPolling({
   const tickRef = useRef(onTick)
   useEffect(() => { tickRef.current = onTick }, [onTick])
   const visible = usePageVisibility()
+  const paused = useModemDownloadPause()
   useEffect(() => {
+    if (paused) return
     let stopped = false
     let timer: number | undefined
     const tick = async () => {
@@ -137,5 +143,5 @@ export function useCompletionPolling({
     }
     void tick()
     return () => { stopped = true; window.clearTimeout(timer) }
-  }, [enabled, interval, refreshKey, visible])
+  }, [enabled, interval, refreshKey, visible, paused])
 }

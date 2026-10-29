@@ -37,7 +37,7 @@ export const rm500q: ModemAdapter = {
     radio: query('AT+CFUN?', 10_000, [rule('^\\+CFUN:\\s*(.*)$', { functionality: field(0, 'number', { min: 0, max: 7 }) })]),
     airplaneSet: write('AT+CFUN={functionality}', { functionality: '1|4' }, networkInvalidates),
     simPin: query('AT+CPIN?', 30_000, [rule('^\\+CPIN:\\s*(.*)$', { pin_required: field(0) })]),
-    iccid: query('AT+QCCID', 30_000, [rule('^\\+QCCID:\\s*(\\d{18,22})$', { iccid: field(0) }, undefined, 'captures')]),
+    iccid: query('AT+QCCID', 30_000, [rule('^\\+QCCID:\\s*(\\d{18,22})[fF]?$', { iccid: field(0) }, undefined, 'captures')]),
     imsi: query('AT+CIMI', 30_000, [rule('^(\\d{14,16})$', { imsi: field(0) }, undefined, 'captures')]),
     phone: query('AT+CNUM', 30_000, [rule('^\\+CNUM:\\s*(.*)$', { number: field(1) })], { optional: true, allowEmpty: true }),
     smsCenter: query('AT+CSCA?', 30_000, [rule('^\\+CSCA:\\s*(.*)$', { sms_center: field(0) })]),

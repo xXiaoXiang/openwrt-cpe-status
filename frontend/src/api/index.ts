@@ -109,7 +109,7 @@ class CpeStatusAPI {
   }
 
   async enableEuiccProfile(iccid: string) {
-    return request<ApiResponse<{ iccid: string; profiles: EuiccProfile[]; network_selection_submitted?: boolean; network_selection_pending?: boolean; network_selection_warning?: string | null }>>('/euicc/profile/enable', {
+    return request<ApiResponse<{ iccid: string; profiles?: EuiccProfile[]; confirmed?: boolean; network_selection_submitted?: boolean; network_selection_pending?: boolean; network_selection_warning?: string | null }>>('/euicc/profile/enable', {
       method: 'POST',
       body: JSON.stringify({ iccid }),
     })
@@ -120,10 +120,6 @@ class CpeStatusAPI {
       method: 'POST',
       body: JSON.stringify({ iccid }),
     })
-  }
-
-  async refreshEuiccSim() {
-    return request<ApiResponse<Record<string, never>>>('/euicc/refresh-sim', { method: 'POST' })
   }
 
   async setEuiccNickname(iccid: string, nickname: string) {

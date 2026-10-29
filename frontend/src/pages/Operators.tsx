@@ -6,8 +6,9 @@ import { request } from '../api/request'
 import { useCapabilities } from '../contexts/CapabilitiesContext'
 import { useSharedDashboardData } from '../contexts/DashboardDataContext'
 import { getCarrierInfo } from '../utils/carriers'
-import { parseOperators, type OperatorNetwork, type OperatorResult, type OperatorState } from '../../../shared/operators.ts'
+import { normalizeOperatorName, parseOperators, type OperatorNetwork, type OperatorResult, type OperatorState } from '../../../shared/operators.ts'
 import { operationSupported } from '../../../shared/availability.ts'
+import { isDeferredMessage } from '../api/modemPolling'
 
 type Selection = { action: 'scan' | 'auto' | 'manual'; plmn?: string; name?: string }
 const labels = ['未知', '可用', '当前', '禁止']
@@ -41,7 +42,10 @@ export default function Operators() {
       if (currentOnly && mounted.current) setLoadingState(result.status !== 'unsupported' && (result.refreshing === true || (!result.state && result.status !== 'error')))
       consume(result, currentOnly)
       return result
-    } catch (error) { if (mounted.current) setNotice({ severity: 'error', text: String(error) }) }
+    } catch (error) {
+      if (isDeferredMessage(String(error))) return { status: 'deferred', refreshing: true } as OperatorResult
+      if (mounted.current) setNotice({ severity: 'error', text: String(error) })
+    }
     finally { pending.current = false; if (mounted.current) setReading(false) }
   }, [consume])
   useEffect(() => {
@@ -49,7 +53,7 @@ export default function Operators() {
     // Finite initial fill; thereafter poll files only while a submitted job runs.
     const revision = operationRevision.current
     void (async () => {
-      for (let i = 0; i < 12 && mounted.current && revision === operationRevision.current; i++) {
+      for (let i = 0; i < 33 && mounted.current && revision === operationRevision.current; i++) {
         const result = await read(i === 0, true)
         if (result?.busy || (result?.state && i > 0 && !result.refreshing) || result?.status === 'error' || result?.status === 'unsupported') break
         await new Promise(resolve => setTimeout(resolve, 2000))
@@ -76,7 +80,7 @@ export default function Operators() {
   const refreshState = async () => {
     setLoadingState(true)
     const before = state?.sampled_at ?? 0
-    for (let i = 0; i < 12 && mounted.current; i++) {
+    for (let i = 0; i < 33 && mounted.current; i++) {
       const result = await read(i === 0, true)
       if (result?.busy || (result?.state && result.state.sampled_at > before) || result?.status === 'error' || result?.status === 'unsupported') break
       await new Promise(resolve => setTimeout(resolve, 2000))
@@ -89,10 +93,10 @@ export default function Operators() {
   const network = dashboard.networkInfo
   const sharedName = network && `${network.mcc ?? ''}${network.mnc ?? ''}` === plmn && isName(network.operator_name) ? network.operator_name : undefined
   const carrier = /^\d{5,6}$/.test(plmn) ? getCarrierInfo(plmn.slice(0, 3), plmn.slice(3)) : null
-  const operatorName = (isName(state?.operator) ? state?.operator : undefined) || scannedName || sharedName || carrier?.operatorCn || '运营商名称待确认'
+  const operatorName = normalizeOperatorName((isName(state?.operator) ? state?.operator : undefined) || scannedName || sharedName || carrier?.operatorCn || '运营商名称待确认')
   const registrationLabel = state?.registered ? state.mode === 0 ? '已自动注册上网络' : state.mode === 1 ? '已手动注册上网络' : '已注册' : '尚未确认注册'
   return <Stack spacing={2} data-operators>
-    <Box display="flex" alignItems="center" gap={1} flexWrap="wrap"><SettingsInputAntenna color="primary" /><Typography variant="h6" flex={1}>运营商与APN设置</Typography>
+    <Box display="flex" alignItems="center" gap={1} flexWrap="wrap"><SettingsInputAntenna color="primary" /><Typography variant="h6" flex={1}>运营商/APN</Typography>
       <Button disabled={busy || reading || loadingState} onClick={() => void refreshState()}>读取状态</Button>
     </Box>
     <Paper variant="outlined" sx={{ p: 2 }}><Stack direction="row" gap={1} flexWrap="wrap" alignItems="center">

@@ -38,11 +38,13 @@ test('timed-out AT write is not retried; late OK is consumed before real confirm
       return { bytesWritten: length, buffer }
     },
   } })
-  await assert.rejects(transport.exchange('AT+CFUN=4', 1), /timed out/)
-  await assert.rejects(transport.exchange('AT+CFUN?', 1), /no new command sent/)
+  // Leave enough time for the first write even when other test files are
+  // running; the missing reply, rather than host scheduling, must time out.
+  await assert.rejects(transport.exchange('AT+CFUN=4', 100), /timed out/)
+  await assert.rejects(transport.exchange('AT+CFUN?', 30), /no new command sent/)
   assert.deepEqual(writes, ['AT+CFUN=4\r'])
   queued = '\r\nOK\r\n'
-  assert.match(await transport.exchange('AT+CFUN?', 100), /\+CFUN: 4/)
+  assert.match(await transport.exchange('AT+CFUN?', 500), /\+CFUN: 4/)
   assert.deepEqual(writes, ['AT+CFUN=4\r', 'AT+CFUN?\r'])
 })
 

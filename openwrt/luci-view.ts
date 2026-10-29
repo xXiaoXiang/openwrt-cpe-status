@@ -9,7 +9,7 @@ return view.extend({
   busy: false,
   state: null,
   readStatus: function() {
-    return fs.exec('/usr/libexec/cpe-status-service-status', []).then(function(result) {
+    return fs.exec('/usr/libexec/cpe-status/service-status', []).then(function(result) {
       var response = JSON.parse(result.stdout || '{}');
       if (result.code !== 0 || response.status !== 'ok' || !response.data)
         throw new Error(response.message || '无法读取服务状态');
@@ -45,7 +45,7 @@ return view.extend({
     if (this.busy || !this.state || !L.hasViewPermission()) return Promise.resolve();
     var button = event.currentTarget, action = button.getAttribute('data-action');
     this.busy = true; this.updateStatus(); button.classList.add('spinning');
-    return fs.exec('/usr/libexec/cpe-status-service-control', [action]).then(function(result) {
+    return fs.exec('/usr/libexec/cpe-status/service-control', [action]).then(function(result) {
       var response = JSON.parse(result.stdout || '{}');
       if (result.code !== 0 || response.status !== 'ok') throw new Error(response.message || '服务操作失败');
     }).catch(function(error) {
@@ -67,10 +67,10 @@ return view.extend({
       E('div', { 'class':'cpe-service-state' }, [this.statusNode]),
       E('div', { 'class':'cpe-service-actions' }, [this.runButton, this.enableButton, this.restartButton])
     ]);
-    var pages = [['仪表盘', '/'], ['频段与小区设置', '/band-lock'], ['运营商与APN设置', '/operators'], ['AT控制台', '/at-console'], ['短信', '/sms']];
+    var pages = [['状态', '/'], ['频段/小区', '/band-lock'], ['运营商/APN', '/operators'], ['AT', '/at-console'], ['短信', '/sms'], ['eUICC', '/euicc']];
     var frame = E('iframe', { src:L.resource('cpe-status/index.html')+'?embedded=1&source=quectel#/', title:'CPE Status', style:'width:100%;height:calc(100vh - 165px);min-height:640px;border:0' });
     var items = pages.map(function(page, index) {
-      return E('li', { 'class':index === 0 ? 'cbi-tab' : 'cbi-tab-disabled', role:'presentation' }, [
+      return E('li', { 'class':index === 0 ? 'cbi-tab' : 'cbi-tab-disabled', role:'presentation', style:page[1] === '/euicc' ? 'display:none' : '' }, [
         E('a', { href:'#', role:'tab', 'aria-selected':index === 0 ? 'true' : 'false', click:function(event) {
           event.preventDefault();
           items.forEach(function(item) { item.className = 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected','false'); });
@@ -79,6 +79,16 @@ return view.extend({
         } }, page[0])
       ]);
     });
+    if (this.euiccListener) window.removeEventListener('message', this.euiccListener);
+    this.euiccListener = function(event) {
+      if (event.origin !== window.location.origin || event.source !== frame.contentWindow || event.data?.type !== 'cpe-status-euicc' || typeof event.data.available !== 'boolean') return;
+      items[5].style.display = event.data.available ? '' : 'none';
+      if (!event.data.available && frame.contentWindow.location.hash === '#/euicc') {
+        frame.contentWindow.location.hash = '/';
+        items.forEach(function(item,index) { item.className = index === 0 ? 'cbi-tab' : 'cbi-tab-disabled'; item.firstChild.setAttribute('aria-selected',index === 0 ? 'true' : 'false'); });
+      }
+    };
+    window.addEventListener('message', this.euiccListener);
     poll.add(L.bind(this.refreshStatus, this), 5);
     return E('div', {}, [E('style', {}, '.cpe-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 16px;flex-wrap:wrap}.cpe-service-state{display:flex;align-items:center;gap:8px;flex:0 0 auto;max-width:100%;line-height:1.6}.cpe-service-actions{display:flex;gap:8px;margin-left:auto;flex:0 0 auto;max-width:100%;flex-wrap:wrap;justify-content:flex-end}.cpe-service-actions button{white-space:nowrap}'), bar, E('ul', { 'class':'cbi-tabmenu', role:'tablist', 'aria-label':'Modem功能' }, items), frame]);
   }, handleSave:null, handleSaveApply:null, handleReset:null

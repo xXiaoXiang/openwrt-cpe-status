@@ -60,6 +60,9 @@ export interface ApiResponse<T = unknown> {
   message: string
   data?: T
   retry_after_ms?: number
+  job_id?: string
+  refreshing?: boolean
+  queue_state?: 'queued' | 'running' | 'finished'
   stale?: boolean
   sampled_at?: number
   display?: string

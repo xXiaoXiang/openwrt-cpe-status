@@ -39,9 +39,9 @@ for (const name of ['unknown','bad-action','extra-service','no-action','status-w
 for (const name of ['start','stop','restart','enable','disable']) assert.equal(JSON.parse(section(name)!).status, 'ok')
 assert.deepEqual(section('calls')!.split('\n'), ['start','stop','restart','enable','disable','restart'])
 const acl = JSON.parse(await readFile('build/openwrt-status-package/files/usr/share/rpcd/acl.d/luci-app-cpe-status.json', 'utf8'))['luci-app-cpe-status']
-assert.deepEqual(acl.read.file['/usr/libexec/cpe-status-service-status'], ['exec'])
-assert.equal(acl.read.file['/usr/libexec/cpe-status-service-control'], undefined)
-assert.deepEqual(acl.write.file['/usr/libexec/cpe-status-service-control'], ['exec'])
+assert.deepEqual(acl.read.file['/usr/libexec/cpe-status/service-status'], ['exec'])
+assert.equal(acl.read.file['/usr/libexec/cpe-status/service-control'], undefined)
+assert.deepEqual(acl.write.file['/usr/libexec/cpe-status/service-control'], ['exec'])
 await mkdir('build/service-control-audit', { recursive: true })
 await writeFile('build/service-control-audit/output.txt', output)
 console.log(JSON.stringify({ statusScenarios: 5, rejectedInvalidActions: 4, fixedServiceOnly: true, separateReadWriteAcl: true, realServiceChanged: false }))

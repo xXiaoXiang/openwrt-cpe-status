@@ -1,13 +1,14 @@
 import { apnRuntime } from './apn-control.ts'
 import { statusRuntime } from './status-collector.ts'
-import { qosDialRuntime } from './qos.ts'
+import { apnRecoveryRuntime } from './apn-protocol.ts'
 
-export const wwanManager = statusRuntime + apnRuntime + qosDialRuntime + String.raw`
+export const wwanManager = statusRuntime + apnRuntime + String.raw`
 function quote(value) { return "'" + replace(value, /'/g, "'\\''") + "'"; }
 function uci(key) { return trim(bounded('uci -q get network.wwan.' + key, 3)); }
 function report(status, message, extra) { save(directory + '/wwan-manager.json', { status, message, ...(extra || {}), time: time() }); }
 function net(action) { bounded(action + ' wwan', 5); }
 function invalidate(simChanged) {
+  unlink(directory+'/apn-active.json');
   let snapshot = readJSON(directory + '/snapshot.json');
   if (snapshot) { snapshot.sampled = {}; delete snapshot.attempted; if (simChanged) { snapshot.raw.sim = ''; delete snapshot.sim_identity; snapshot.raw.status = ''; snapshot.raw.cells = ''; } save(directory + '/snapshot.json', snapshot); }
   for (let name in ['bands.json', 'cell-locks.json', 'operators.json']) unlink(directory + '/' + name);
@@ -33,21 +34,8 @@ function binary(cmd) {
   let raw = at(profileCommand(cmd)); return uc(profileRow(cmd, raw).data || '');
 }
 function choose(entries, sim, current) {
-  let valid = [], lengths = {}, specific = [], generic = [];
-  for (let row in entries) if (index(sim.imsi, row.mcc + row.mnc) == 0 && (!sim.mncLength || length(row.mnc) == sim.mncLength)) {
-    lengths[length(row.mnc)] = true;
-    let pattern = row.mvno_match_data || '', accepted = false;
-    if (!row.mvno_type) accepted = true;
-    else if (row.mvno_type == 'imsi' && length(pattern) && length(pattern) <= length(sim.imsi)) {
-      accepted = true;
-      for (let i = 0; i < length(pattern); i++) if (substr(pattern, i, 1) != 'x' && substr(pattern, i, 1) != 'X' && substr(pattern, i, 1) != substr(sim.imsi, i, 1)) accepted = false;
-    } else if (row.mvno_type == 'iccid') { for (let prefix in split(pattern, ',')) if (length(prefix) && index(sim.iccid, prefix) == 0) accepted = true; }
-    else if (row.mvno_type == 'gid') accepted = length(pattern) && index(uc(sim.gid || ''), uc(pattern)) == 0;
-    else if (row.mvno_type == 'spn') accepted = length(pattern) && lc(sim.spn || '') == lc(pattern);
-    if (accepted) push(row.mvno_type ? specific : generic, row);
-  }
-  if (length(keys(lengths)) > 1) return null;
-  valid = length(specific) ? specific : generic;
+  let valid=apnCandidates(entries,sim), specific=filter(valid,apnSpecific);
+  if (length(specific)) valid=specific;
   for (let row in valid) if (row.apn == current) return row;
   return valid[0];
 }
@@ -59,7 +47,9 @@ function localApns() {
   }
   return value.apns;
 }
+` + apnRecoveryRuntime + String.raw`
 function tick() {
+  if (downloadActivity().active) return;
   refreshProfile();
   let state = readJSON(directory + '/sim-identity.json');
   if (!stat(port) || !profile) {
@@ -67,7 +57,14 @@ function tick() {
     report('waiting', profileError || 'Modem 不存在，wwan 已停用'); return;
   }
   if (!autoApnSupported()) { report('unsupported', 'Not applicable'); return; }
+  let usb=apnUsbToken();
+  if (state && usb && state.usb_token!=usb) {
+    if (state.usb_token) { state.present=false; state.configured=false; state.imsi=''; state.imsi_checked=0; invalidate(true); }
+    state.usb_token=usb; state.checked=0; save(directory+'/sim-identity.json',state);
+  }
+  try { apnRecoveryTick(state); } catch(e) { report('error',''+e); }
   if (state?.checked && time() - state.checked < 30) return;
+  if (manualReadPending() && state?.configured!==false && state?.present!==false && !state?.profile_switch_pending) return;
   let netifd = null;
   try { netifd = json(bounded('ubus -S call network.interface.wwan status 2>/dev/null', 3)); } catch(e) {}
   if (!netifd || index(['qmi', 'mbim'], netifd.proto) < 0) { report('waiting', '等待 netifd 的 wwan 接口就绪'); return; }
@@ -94,7 +91,7 @@ function tick() {
       if (!state?.present) net('ifdown');
       report('waiting', '等待 SIM 解锁及归属信息');
     } else {
-      let sim = { present: true, iccid, imsi, checked: time(), imsi_checked: imsiChecked }, changed = state?.iccid != sim.iccid || state?.imsi != sim.imsi || state?.present !== true;
+      let sim = { present: true, iccid, imsi, usb_token:usb, checked: time(), imsi_checked: imsiChecked }, changed = state?.iccid != sim.iccid || state?.imsi != sim.imsi || state?.present !== true;
       if (!changed && state.configured && state.apnStamp == text('/etc/cpe-status/apns.local.json')) { state.checked = time(); state.imsi_checked = imsiChecked; save(directory + '/sim-identity.json', state); }
       else {
         // EF_AD byte 4 supplies the home MNC length; never use serving PLMN.
@@ -109,7 +106,7 @@ function tick() {
         }
         let override = (readJSON(apnOverridePath) || {})[sim.iccid];
         if (override) override = apnValidate(override);
-        let apn = override ? { apn: override.apn, carrier: '用户配置', mcc: substr(sim.imsi,0,3), mnc: substr(sim.imsi,3,sim.mncLength || 2) } : (choose(localApns(), sim, '') || choose(readJSON('/usr/share/cpe-status/apns.json') || [], sim, uci('apn')));
+        let apn = override ? { apn: override.apn, carrier: '用户配置', mcc: substr(sim.imsi,0,3), mnc: substr(sim.imsi,3,sim.mncLength || 2) } : (choose(localApns(), sim, '') || choose(apnOfficialEntries(), sim, uci('apn')));
         if (!apn) {
           net('ifdown');
           save(directory + '/sim-identity.json', sim); invalidate(true);
@@ -120,9 +117,9 @@ function tick() {
           let username = adopt ? uci('username') : apn.user || '', password = adopt ? uci('password') : apn.password || '';
           let pdptype = adopt && index(['ip', 'ipv4', 'ipv6', 'ipv4v6'], uci('pdptype')) >= 0 ? uci('pdptype') : apn.protocol == 'IPV6' ? 'ipv6' : apn.protocol == 'IPV4V6' ? 'ipv4v6' : 'ipv4';
           let auth = !length(username) && !length(password) ? 'none' : adopt ? uci('auth') || 'none' : ({ '1': 'pap', '2': 'chap', '3': 'both' })[apn.authtype] || 'none';
-          let values = override || { apn: apn.apn, pdptype, auth, username, password }, commands = [];
+          let values = apnProtocolApply(override || { apn: apn.apn, pdptype, auth, username, password },sim,!!override), commands = [];
           for (let key, value in values) if (uci(key) != value) push(commands, 'uci set ' + quote('network.wwan.' + key + '=' + value));
-          let restart = length(commands) > 0 || (state?.iccid && state.iccid != sim.iccid);
+          let restart = length(commands) > 0 || state?.profile_changed === true || (state?.iccid && state.iccid != sim.iccid);
           if (restart && (netifd.up || netifd.pending)) net('ifdown');
           if (length(commands)) {
             let saved = bounded(join(' && ', commands) + ' && uci commit network && echo CPE_APN_SAVED', 8);
@@ -131,7 +128,6 @@ function tick() {
           for (let key, value in values) if (uci(key) != value) die('APN 配置回读不一致，wwan 保持关闭');
           let desired = readJSON(directory + '/user-data.json'), radio = profileRow('radio', at(profileCommand('radio')));
           if (desired?.enabled !== false && radio.functionality == profile.radioStates.online && (restart || (!netifd.up && !netifd.pending))) {
-            prepareQosDial();
             let submitted = bounded('ifup wwan && echo CPE_IFUP_SUBMITTED', 5);
             if (index(submitted, 'CPE_IFUP_SUBMITTED') < 0) die('APN 已保存，等待 wwan 启动成功后重试');
           }
@@ -159,21 +155,23 @@ START=18
 STOP=89
 USE_PROCD=1
 start_service() {
-  /usr/libexec/cpe-status-wwan --prepare
+  /usr/libexec/cpe-status/migrate || return 1
+  /usr/libexec/cpe-status/wwan --prepare
   procd_open_instance speed
-  procd_set_param command /usr/libexec/cpe-status-speed
+  procd_set_param command /usr/libexec/cpe-status/speed
   procd_set_param respawn 3600 5 5
   procd_close_instance
   procd_open_instance qos
-  procd_set_param command /usr/libexec/cpe-status-qos-watch
+  procd_set_param command /usr/libexec/cpe-status/qos-watch
+  procd_set_param term_timeout 12
   procd_set_param respawn 3600 5 5
   procd_close_instance
   procd_open_instance wwan
-  procd_set_param command /usr/libexec/cpe-status-wwan
+  procd_set_param command /usr/libexec/cpe-status/wwan
   procd_set_param respawn 3600 5 5
   procd_close_instance
   procd_open_instance sms
-  procd_set_param command /usr/libexec/cpe-status-sms-poll
+  procd_set_param command /usr/libexec/cpe-status/sms-poll
   procd_set_param respawn 3600 5 5
   procd_close_instance
 }
@@ -181,7 +179,7 @@ start_service() {
 export const smsPoll = String.raw`#!/bin/sh
 umask 077
 while :; do
-  /usr/libexec/cpe-status-messaging sync >/dev/null 2>&1
+  /usr/libexec/cpe-status/messaging sync >/dev/null 2>&1
   sleep 30
 done
 `

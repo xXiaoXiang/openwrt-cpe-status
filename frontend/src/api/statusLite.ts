@@ -1,5 +1,5 @@
 import { modemProfiles, type ProfileReply } from './profileCache.ts'
-import { validateApnSettings, type ApnSettings } from '../../../shared/apn-settings.ts'
+import { validateApnSettings, validateApnDelete, type ApnDeleteRequest, type ApnSettings } from '../../../shared/apn-settings.ts'
 import { snapshotRoutes, type StatusSnapshot } from '../../../shared/status-snapshot.ts'
 import type { ApiResponse } from '../../../shared/adapter.ts'
 import { snapshotCapabilities } from '../../../shared/roaming.ts'
@@ -7,6 +7,7 @@ import { bandGroups, normalizeBands, type BandState } from '../../../shared/band
 import { cellLockParams, lockMatches, networkModes, type CellLockRequest, type CellLockState } from '../../../shared/radio-settings.ts'
 import { joinSmsSegments, type ArchivedSms } from '../../../shared/sms-history.ts'
 import { featureEnabled, operationSupported, unsupportedResult } from '../../../shared/availability.ts'
+import { euiccLiteFetch } from './euiccLite'
 
 const unsupported: ApiResponse = { status: 'unsupported', message: '此状态插件未启用该操作' }
 let interval = Number(localStorage.getItem('cpe-status-refresh') ?? 2000)
@@ -19,14 +20,37 @@ let canWrite: boolean | undefined
 let localRead: Promise<{ speed?: { wall_time: number; time: number; previous_time: number; counters: StatusSnapshot['host']['counters']; previous_counters: StatusSnapshot['host']['counters'] }; wwan?: { status: string; message: string; carrier?: string; apn?: string } }> | undefined
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'Content-Type': 'application/json' } })
 export async function statusLiteFetch(path: string, init: RequestInit | undefined, rpc: (object: string, method: string, args: object) => Promise<unknown>) {
+  if (path === '/api/euicc' || path.startsWith('/api/euicc/')) return euiccLiteFetch(path, init, rpc, canWrite === true)
+  if (path === '/api/apn/custom') {
+    if (canWrite !== true) return response({status:'error',message:'当前 LuCI 会话没有 APN 配置权限'})
+    if (init?.method?.toUpperCase()!=='DELETE') return response({status:'error',message:'无效的个人 APN 操作'})
+    let target: ApnDeleteRequest
+    try { target=validateApnDelete(JSON.parse(String(init.body ?? '{}'))) }
+    catch(error) { return response({status:'error',message:String(error)}) }
+    if (writing) return response({status:'deferred',message:'配置正在更新，请稍后重试'})
+    writing=true
+    try {
+      const result=await rpc('file','exec',{command:'/usr/libexec/cpe-status/control',params:['apn-delete',JSON.stringify(target)]}) as {code?:number;stdout?:string;stderr?:string}
+      if (result.code!==0 || !result.stdout) throw new Error(result.stderr || '删除个人 APN 没有返回结果')
+      return response(JSON.parse(result.stdout))
+    } finally { writing=false }
+  }
+  if (path === '/api/apn/database') {
+    if (canWrite !== true) return response({ status: 'error', message: '当前 LuCI 会话没有 APN 配置权限' })
+    const method=(init?.method ?? 'GET').toUpperCase()
+    if (!['GET','POST'].includes(method)) return response({status:'error',message:'无效的 APN 数据库操作'})
+    const result=await rpc('file','exec',{command:'/usr/libexec/cpe-status/apn-database',params:[method==='POST' ? 'update' : 'status']}) as {code?:number;stdout?:string;stderr?:string}
+    if (result.code!==0 || !result.stdout) throw new Error(result.stderr || 'APN 数据库没有返回结果')
+    return response(JSON.parse(result.stdout))
+  }
   const loadProfile = async (): Promise<ProfileReply> => {
-    const file = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: ['profile'] }) as { code?: number; stdout?: string }
+    const file = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/snapshot', params: ['profile'] }) as { code?: number; stdout?: string }
     if (file.code !== 0 || !file.stdout) throw new Error('模块适配规则读取失败')
     return JSON.parse(file.stdout)
   }
   const hydrate = (snapshot: StatusSnapshot) => modemProfiles.hydrate(snapshot, loadProfile)
   if (path === '/api/qos' && (init?.method ?? 'GET') === 'GET') {
-    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-qos-read', params: [] }) as { code?: number; stdout?: string }
+    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/qos-read', params: [] }) as { code?: number; stdout?: string }
     return response(result.code === 0 && result.stdout ? JSON.parse(result.stdout) : unsupported)
   }
   if (path === '/api/adaptation') {
@@ -37,7 +61,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     return response({ status: 'ok', data: { ...snapshotCapabilities, id: profile?.id ?? 'unknown-modem', writes_enabled: canWrite && valid, data_control: featureEnabled(profile, 'dataControl') && operationSupported(profile, 'radio'), airplane_control: operationSupported(profile, 'radio') && operationSupported(profile, 'airplaneSet'), roaming_policy: operationSupported(profile, 'roamingPreference') && operationSupported(profile, 'roamingSet'), modem_profile: profile } })
   }
   const local = async () => {
-    if (!localRead) localRead = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-speed-settings', params: ['read'] }).then(result => {
+    if (!localRead) localRead = rpc('file', 'exec', { command: '/usr/libexec/cpe-status/speed-settings', params: ['read'] }).then(result => {
       const value = result as { code?: number; stdout?: string }
       return value.code === 0 && value.stdout ? JSON.parse(value.stdout) : {}
     }).finally(() => { localRead = undefined })
@@ -45,7 +69,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
   }
   if ((path === '/api/apn' || path === '/api/apn/refresh') && (init?.method ?? 'GET') === 'GET') {
     if (canWrite !== true) return response({ status: 'error', message: '当前 LuCI 会话没有 APN 配置权限' })
-    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-apn', params: path.endsWith('/refresh') ? ['refresh'] : [] }) as { code?: number; stdout?: string; stderr?: string }
+    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/apn', params: path.endsWith('/refresh') ? ['refresh'] : [] }) as { code?: number; stdout?: string; stderr?: string }
     if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || 'APN 配置读取失败')
     return response(JSON.parse(result.stdout))
   }
@@ -56,7 +80,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
       if (![0, 1000, 2000, 3000, 5000, 10000].includes(value)) throw new Error('Invalid refresh interval')
       interval = value; localStorage.setItem('cpe-status-refresh', String(value))
     }
-    if (path === '/api/refresh/config') await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-speed-settings', params: [String(interval)] })
+    if (path === '/api/refresh/config') await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/speed-settings', params: [String(interval)] })
     return response({ status: 'ok', data: { interval_ms: interval } })
   }
   if (path === '/api/at' || path.startsWith('/api/sms/')) {
@@ -71,7 +95,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     } else if (url.pathname === '/api/sms/clear' && post) params = ['clear']
     else if (!post && ['/api/sms/list', '/api/sms/conversation', '/api/sms/stats'].includes(url.pathname)) params = ['list']
     else return response(unsupported)
-    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-messaging', params }) as { code?: number; stdout?: string; stderr?: string }
+    const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/messaging', params }) as { code?: number; stdout?: string; stderr?: string }
     if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || 'AT / 短信操作未返回结果')
     const value = JSON.parse(result.stdout)
     if (path === '/api/at') {
@@ -95,7 +119,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     if (start && writing) return response({ status: 'deferred', message: '已有 Modem 操作正在执行', scanning: false })
     // Short submission and file-only polling: a LuCI request never waits for
     // the multi-minute scan. The backend AT lock coordinates other sessions.
-    const result = await rpc('file', 'exec', { command: start ? '/usr/libexec/cpe-status-control' : '/usr/libexec/cpe-status-scan-result', params: start ? ['scan'] : [] }) as { code?: number; stdout?: string; stderr?: string }
+    const result = await rpc('file', 'exec', { command: start ? '/usr/libexec/cpe-status/control' : '/usr/libexec/cpe-status/scan-result', params: start ? ['scan'] : [] }) as { code?: number; stdout?: string; stderr?: string }
     if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '无法读取小区扫描任务')
     const value = JSON.parse(result.stdout)
     return response(value.status === 'pending' ? { ...value, status: 'deferred', scanning: true } : value)
@@ -108,14 +132,14 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     const params = !start ? path.endsWith('/current-result') ? ['state'] : path.endsWith('/current') ? ['current'] : path.endsWith('/refresh') ? ['refresh'] : [] : body.action === 'scan' ? ['operator-scan'] : body.action === 'auto' ? ['operator', 'auto'] : body.action === 'manual' && /^\d{5,6}$/.test(body.plmn ?? '') ? ['operator', body.plmn] : null
     if (!params) return response({ status: 'error', message: '无效的选网参数' })
     if (start && writing) return response({ status: 'deferred', message: '已有 Modem 操作正在执行', busy: false })
-    const result = await rpc('file', 'exec', { command: start ? '/usr/libexec/cpe-status-control' : '/usr/libexec/cpe-status-operators', params }) as { code?: number; stdout?: string; stderr?: string }
+    const result = await rpc('file', 'exec', { command: start ? '/usr/libexec/cpe-status/control' : '/usr/libexec/cpe-status/operators', params }) as { code?: number; stdout?: string; stderr?: string }
     if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '无法读取运营商任务')
     const value = JSON.parse(result.stdout)
     if (start) { revision++; if (cache) cache.time = 0 }
     return response(value.status === 'pending' ? { ...value, status: 'deferred', busy: true } : value)
   }
   if (['/api/band-lock', '/api/cell-lock', '/api/cell-lock/refresh'].includes(path) && (init?.method ?? 'GET') === 'GET') {
-    const result = await rpc('file', 'exec', { command: path.startsWith('/api/cell-lock') ? '/usr/libexec/cpe-status-cell-locks' : '/usr/libexec/cpe-status-bands', params: path.endsWith('/refresh') ? ['refresh'] : [] }) as { code?: number; stdout?: string; stderr?: string }
+    const result = await rpc('file', 'exec', { command: path.startsWith('/api/cell-lock') ? '/usr/libexec/cpe-status/cell-locks' : '/usr/libexec/cpe-status/bands', params: path.endsWith('/refresh') ? ['refresh'] : [] }) as { code?: number; stdout?: string; stderr?: string }
     if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '频段读取未返回结果')
     return response(JSON.parse(result.stdout))
   }
@@ -149,13 +173,13 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
       return JSON.parse(result.stdout) as { status: string; message?: string; job_id?: string; data?: Record<string, unknown>; snapshot?: StatusSnapshot }
     }
     try {
-      let result = await execute('/usr/libexec/cpe-status-control', params)
+      let result = await execute('/usr/libexec/cpe-status/control', params)
       if (result.status !== 'pending') return response(result)
       if (!result.job_id || !/^\d+-\d+$/.test(result.job_id)) throw new Error('无效的 Modem 控制任务')
       const job = result.job_id, deadline = Date.now() + 60_000
       do {
         await new Promise(resolve => setTimeout(resolve, 1000))
-        result = await execute('/usr/libexec/cpe-status-control-result', [job])
+        result = await execute('/usr/libexec/cpe-status/control-result', [job])
       } while (result.status === 'pending' && Date.now() < deadline)
       if (result.snapshot && result.snapshot.device === cache?.data.device) cache = { time: 0, data: await hydrate(result.snapshot) }
       else if (cache) cache.time = 0
@@ -179,7 +203,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
     if (writing) return response({ status: 'error', message: '正在设置漫游偏好，请稍后重试' })
     writing = true; revision++
     try {
-      const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status-roaming', params: [body.allowed ? '255' : '1'] }) as { code?: number; stdout?: string; stderr?: string }
+      const result = await rpc('file', 'exec', { command: '/usr/libexec/cpe-status/roaming', params: [body.allowed ? '255' : '1'] }) as { code?: number; stdout?: string; stderr?: string }
       if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '漫游设置没有返回结果，请刷新检查实际状态')
       const confirmed = JSON.parse(result.stdout) as ApiResponse<Record<string, unknown>> & { raw?: string; sampled_at?: number }
       if (confirmed.status !== 'ok') {
@@ -201,7 +225,7 @@ export async function statusLiteFetch(path: string, init: RequestInit | undefine
   if (!writing && (!cache || Date.now() - cache.time >= 450)) {
     if (!pending) {
       const readRevision = revision
-      pending = rpc('file', 'exec', { command: '/usr/libexec/cpe-status-snapshot', params: [] }).then(async value => {
+      pending = rpc('file', 'exec', { command: '/usr/libexec/cpe-status/snapshot', params: [] }).then(async value => {
       const result = value as { code?: number; stdout?: string; stderr?: string }
       if (result.code !== 0 || !result.stdout) throw new Error(result.stderr || '采集脚本没有返回数据')
       const snapshot = await hydrate(JSON.parse(result.stdout) as StatusSnapshot)

@@ -33,7 +33,27 @@ reply(job);
 export const modemControl = resultRuntime + bandRuntime + radioSettingsRuntime + operatorRuntime + apnRuntime + qosDialRuntime + String.raw`
 mkdir(directory, 0700);
 if (iface != 'wwan') { reply({ status: 'error', message: '此插件仅允许管理 wwan 接口' }); exit(0); }
-const controlScript = getenv('CPE_STATUS_CONTROL_SCRIPT') || '/usr/libexec/cpe-status-control';
+// This write-authorized action edits only saved personal APNs. The common lock
+// serializes it with saves and SIM reconciliation; no AT or dial task is needed.
+if (ARGV[0]=='apn-delete') {
+  if (downloadActivity().active) { reply(downloadDeferred()); exit(0); }
+  let lock=getenv('CPE_STATUS_LOCK') || directory+'/lock', acquired=false;
+  try {
+    if (length(ARGV)!=2) die('无效的删除参数');
+    let request=json(ARGV[1]);
+    if (!match(request?.iccid || '',/^[0-9]{18,22}$/)) die('无效 ICCID');
+    let target=apnValidate(request.settings);
+    if (!mkdir(lock,0700)) { reply({status:'deferred',message:'配置正在更新，请稍后重试'}); exit(0); }
+    acquired=true; writefile(lock+'/pid',''+pid);
+    let sim=readJSON(directory+'/sim-identity.json');
+    if (sim?.present===false || sim?.iccid!=request.iccid || sim?.profile_switch_pending || (sim?.usb_token && sim.usb_token!=apnUsbToken())) die('SIM 已变化，请重新读取 APN');
+    let deleted=apnForget(request.iccid,target);
+    reply({status:'ok',message:'个人 APN 设置已删除',deleted,data:{settings:apnSettings(),...apnCatalog(),...(apnCachedActive() || {active:false})}});
+  } catch(e) { reply({status:'error',message:''+e}); }
+  if (acquired) { unlink(lock+'/pid'); rmdir(lock); }
+  exit(0);
+}
+const controlScript = getenv('CPE_STATUS_CONTROL_SCRIPT') || '/usr/libexec/cpe-status/control';
 function preflight(kind, target) {
   if (!profile) die(profileError || '模块尚未适配');
   let required = [];
@@ -52,6 +72,7 @@ function preflight(kind, target) {
   for (let name in required) if (!profileHas(name)) die('Unsupported: ' + (profile.unsupportedOperations?.[name] || name));
 }
 if (ARGV[0] != '--run') {
+  if (downloadActivity().active) { reply(downloadDeferred()); exit(0); }
   let target = null;
   if (ARGV[0] == 'apn') {
     try { if (length(ARGV) != 2) die('Invalid APN arguments'); target = apnValidate(json(ARGV[1])); } catch(e) { reply({ status: 'error', message: '' + e }); exit(0); }
@@ -140,6 +161,7 @@ if (!job || job.status != 'pending' || job.device != port || job.profile_key != 
 let lock = getenv('CPE_STATUS_LOCK') || directory + '/lock', acquired = false, deadline = job.started + (longOperator(job.kind) ? 240 : job.kind == 'scan' ? 220 : 60);
 let lockDeadline = (longOperator(job.kind) || job.kind == 'scan') ? job.started + 25 : deadline;
 while (time() < lockDeadline) {
+  if (downloadActivity().active) { deadline+=1; lockDeadline+=1; sleep(1000); continue; }
   if (mkdir(lock, 0700)) { acquired = true; break; }
   let owner = +text(lock + '/pid'), info = stat(lock);
   if ((!owner || !stat('/proc/' + owner)) && info && time() - info.mtime >= 2) { unlink(lock + '/pid'); rmdir(lock); continue; }
@@ -291,15 +313,14 @@ try {
     if (index(saved, 'CPE_APN_SAVED') < 0) die('APN 保存失败');
     for (let key, value in target) if (apnUci(key) != value) die('APN 配置回读不一致');
     mkdir('/etc/cpe-status', 0700);
-    let overrides = readJSON(apnOverridePath) || {};
-    overrides[iccid] = target; save(apnOverridePath, overrides);
+    apnRemember(iccid,target);
     save(directory + '/wwan-manager.json', { status: 'ready', message: '已使用此 SIM 的自定义 APN', apn: target.apn, carrier: '用户配置', time: time() });
     job.submitted = true;
     save(directory + '/user-data.json', { enabled: true });
+    unlink(directory+'/apn-active.json');
     apnLog('APN 已保存，正在断开 wwan');
     bounded('ifdown wwan', budget(5));
     waitNetwork(false);
-    ensureQosDial();
     apnLog('正在使用新配置拨号');
     let dial = bounded('ifup wwan && echo CPE_APN_IFUP', budget(5));
     if (index(dial, 'CPE_APN_IFUP') < 0) die('APN 已保存，wwan 拨号请求未确认');
@@ -314,15 +335,16 @@ try {
     }
     if (!networkReady(true)) die('ModemReadDeferred: APN 已保存并提交重拨，尚未确认 IP 地址');
     if (profileHas('contexts') && profileHas('contextsActive')) {
+      let identity=apnActiveIdentity();
       let raw = bounded('sms_tool -d ' + port + ' at ' + apnQuote(profileBatch(['contexts','contextsActive'])), budget(5));
-      if (length(profileParse('contextsActive', raw))) save(directory + '/apn-active.json', { device: port, ...apnActive(raw) });
+      if (length(profileParse('contextsActive', raw))) apnSaveActive(raw,identity);
     } else save(directory + '/apn-active.json', { device: port, active_supported: false });
-    job.data = { settings: apnSettings(), ...(readJSON(directory + '/apn-active.json') || { active: false }), logs: job.logs };
+    job.data = { settings: apnSettings(), ...apnCatalog(), ...(readJSON(directory + '/apn-active.json') || { active: false }), logs: job.logs };
     job.status = 'ok'; job.message = 'APN 已保存，wwan 已重新连接';
   } else if (longOperator(job.kind)) {
     requireRm500q();
     if (queryRadio() != 1) die('请先关闭飞行模式');
-    let atScript = getenv('CPE_STATUS_OPERATOR_AT_SCRIPT') || '/usr/libexec/cpe-status-operator-at';
+    let atScript = getenv('CPE_STATUS_OPERATOR_AT_SCRIPT') || '/usr/libexec/cpe-status/operator-at';
     if (!match(atScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid operator AT executable');
     let cmd = job.kind == 'operator-scan' ? profileCommand('operatorScan') : job.target == 'auto' ? profileCommand('operatorAuto') : profileCommand('operatorManual', { plmn: job.target });
     job.at_command = cmd; job.submitted = true;
@@ -361,7 +383,7 @@ try {
   } else if (job.kind == 'scan') {
     requireRm500q();
     if (queryRadio() != 1) die('请先关闭飞行模式再扫描小区');
-    let scanScript = getenv('CPE_STATUS_SCAN_AT_SCRIPT') || '/usr/libexec/cpe-status-scan-at';
+    let scanScript = getenv('CPE_STATUS_SCAN_AT_SCRIPT') || '/usr/libexec/cpe-status/scan-at';
     if (!match(scanScript, /^\/[a-zA-Z0-9_./-]+$/)) die('Invalid scan executable');
     job.submitted = true;
     // Leave five seconds to collect OK after the modem's 180-second scan.
