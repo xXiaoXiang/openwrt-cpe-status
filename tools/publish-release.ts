@@ -117,10 +117,14 @@ if (pruneOldApks) {
 const rows = published.filter(asset => /-(aarch64_cortex-a53|x86_64)\.apk$/.test(asset.name)).map(asset => {
   const architecture = /-(aarch64_cortex-a53|x86_64)\.apk$/.exec(asset.name)![1]
   const hash = asset.digest?.replace(/^sha256:/, '') || artifacts.find(item => item.name === asset.name)?.hash || '-'
-  return `| ${architecture} | [${asset.name}](${asset.browser_download_url}) | \`${hash}\` |`
+  // Draft asset URLs contain an untagged-* placeholder which becomes obsolete
+  // on publication. Build links from the already-pushed release tag instead.
+  const downloadUrl = `https://github.com/xXiaoXiang/openwrt-cpe-status/releases/download/${version}/${encodeURIComponent(asset.name)}`
+  return `| ${architecture} | [${asset.name}](${downloadUrl}) | \`${hash}\` |`
 })
 const intro = notes ?? release.body.split('\n\nImmortalWrt 25.12.2')[0]
 const verification = published.some(asset => asset.name.endsWith('-x86_64.apk')) ? '\n\nx86_64 包已完成 SDK 构建及包完整性、架构和依赖检查，尚未进行 x86 路由器实机验证。' : ''
 const updated = await fetch(`${endpoint}/${release.id}`, { method: 'PATCH', headers, body: JSON.stringify({ draft: false, make_latest: 'true', body: `${intro}\n\nImmortalWrt 25.12.2 APK\n\n| 架构 | 下载 | SHA256 |\n| --- | --- | --- |\n${rows.join('\n')}${verification}` }) })
 if (!updated.ok) throw new Error(`Release notes update failed: ${updated.status}`)
+release = await updated.json() as typeof release
 console.log(JSON.stringify({ release: release.html_url, artifacts: artifacts.map(({name,hash}) => ({ name, sha256: hash })), removed }))
